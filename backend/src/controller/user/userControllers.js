@@ -30,6 +30,7 @@ export const Register = async (req, res) => {
         user.token = token
         await user.save()
 
+console.log(user);
 
         if (user) {
             return res.status(201).json({
@@ -89,7 +90,7 @@ export const login = async (req, res) => {
             existing.isLoged = true
             await existing.save()
 
-            res.cookie("userToken", accessToken, { httpOnly: true, sameSite: "strict", secure: false });
+            res.cookie("userToken", accessToken, { httpOnly: true, sameSite: "lax", secure: false });
 
             return res.status(200).json({
                 success: true,
