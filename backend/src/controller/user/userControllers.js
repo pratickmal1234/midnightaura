@@ -114,32 +114,45 @@ export const login = async (req, res) => {
 
 
 export const Logout = async (req, res) => {
-    try {
-        const user = await userSchema.findById({ _id: req.userId });
-        if (user) {
-            user.isLoged = false;
-            await user.save()
+  try {
 
-            res.clearCookie("userToken");
+    const user = await userSchema.findById(req.userId);
 
-            return res.status(200).json({
-                success: true,
-                message: "Logged out successfully"
-            })
+    if (user) {
 
-        } else {
-            return res.status(404).json({
-                success: false,
-                message: "User had no session",
-            });
-        }
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            message: error.message
-        })
+      user.isLoged = false;
+
+      await user.save();
+
+      res.clearCookie("userToken", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "Strict",
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Logged out successfully",
+      });
+
+    } else {
+
+      return res.status(404).json({
+        success: false,
+        message: "User had no session",
+      });
+
     }
-}
+
+  } catch (error) {
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+
+  }
+};
 
 
 
