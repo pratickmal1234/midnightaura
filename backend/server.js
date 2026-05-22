@@ -10,7 +10,7 @@ const allowedOrigins = [
 
   "http://localhost:3000","https://feedbacker-student.vercel.app"
 ];
-
+const app = express();
 dbConnect();
 
 const port = process.env.port || 6000
