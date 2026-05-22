@@ -5,6 +5,7 @@ import dotenv from "dotenv/config";
 import { dbConnect } from "./src/config/dbConnect.js";
 import router from "./src/routes/adminRoutes.js";
 import userRout from "./src/routes/userRoutes.js";
+const app = express(); 
 const allowedOrigins = [
 
   "http://localhost:3000","https://feedbacker-student.vercel.app"
