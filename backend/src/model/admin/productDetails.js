@@ -1,44 +1,37 @@
+// models/ProductDetailsModel.js
+
+import mongoose from "mongoose";
 
 const productDetailsSchema = new mongoose.Schema(
-    {
-        productId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Product",
-            required: true,
-        },
-
-        type: {
-            type: String,
-            required: true,
-        },
-
-        functionType: {
-            type: String,
-            required: true,
-        },
-
-        connectivity: {
-            type: String,
-            required: true,
-        },
-
-        printSpeed: {
-            type: String,
-            required: true,
-        },
-
-        resolution: {
-            type: String,
-            required: true,
-        },
-
-        inkYield: {
-            type: String,
-            required: true,
-        },
+  {
+    // Relation with Product table
+    productId: {
+      type: String,
+      required: true,
+      unique: true,
+      ref: "Product",
     },
-    {
-        timestamps: true,
-    }
+
+    details: [
+      {
+        field: {
+          type: String,
+          required: true,
+        },
+
+        value: {
+          type: String,
+          required: true,
+        },
+      },
+    ],
+  },
+  {
+    timestamps: true,
+  }
 );
-export default mongoose.model("productdetails", productDetailsSchema)
+
+export default mongoose.model(
+  "ProductDetails",
+  productDetailsSchema
+);

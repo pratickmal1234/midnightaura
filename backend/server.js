@@ -5,12 +5,15 @@ import dotenv from "dotenv/config";
 import { dbConnect } from "./src/config/dbConnect.js";
 import router from "./src/routes/adminRoutes.js";
 import userRout from "./src/routes/userRoutes.js";
+import productRoute from "./src/routes/productRoutes.js";
+import productBuyRoutes from "./src/routes/productBuyRoutes.js";
+import path from "path";
 const app = express(); 
 const allowedOrigins = [
 
   "http://localhost:3000","https://feedbacker-student.vercel.app"
 ];
-const app = express();
+
 dbConnect();
 
 const port = process.env.port || 6000
@@ -31,11 +34,16 @@ app.use(cors({
 }));
 app.use(express.urlencoded({ extended: true }))
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"))
+);
 
 // ✅ 3) Routes
 app.use("/admin", router);
 app.use("/user", userRout);
+app.use("/product",productRoute);
+app.use("/productBuy", productBuyRoutes);
 
 app.listen(port, () => {
   console.log(`the server is running on ${port}`);
