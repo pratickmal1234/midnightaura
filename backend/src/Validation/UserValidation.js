@@ -3,18 +3,13 @@
 import * as yup from "yup";
 
 export const registerSchema = yup.object({
-  firstName: yup
+  username: yup
     .string()
     .trim()
     .min(3, "Name must be at least 3 characters")
     .required("Name is required"),
 
-  lastName: yup
-    .string()
-    .trim()
-    .min(3, "Name must be at least 3 characters")
-    .required("Name is required"),
-
+ 
   email: yup
     .string()
     .email("Invalid email format")

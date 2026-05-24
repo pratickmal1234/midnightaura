@@ -1,25 +1,51 @@
+// models/user.model.js
 import mongoose from "mongoose";
-const userSchema = new mongoose.Schema({
-    firstName: {
-        type: String,
-        required: true
-    }, lastName: {
-        type: String,
-        required: true
-    }, email: {
-        type: String,
-        required: true
-    }, password: {
-        type: String,
-        required: true
-    }, isLoged: {
-        type: Boolean,
-        default: false
-    }, token: {
-        type: String,
-        default: null
-    }
 
-}, { timestamps: true })
+const userSchema = new mongoose.Schema(
+  {
+    // ── Auth fields (required at signup) ──────────────────────────
+     username: {
+      type: String,
+      
+    },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    password: {
+      type: String,
+      required: true,
+    },
+    isLoged: {
+      type: Boolean,
+      default: false,
+    },
+    token: {
+      type: String,
+      default: null,
+    },
 
-export default mongoose.model("user", userSchema)
+    // ── Personal details (empty by default, filled from profile) ──
+   
+   
+    phone: {
+      type: String,
+      default: "",
+    },
+    altPhone: {
+      type: String,
+      default: "",
+    },
+    gender: {
+      type: String,
+      enum: ["Male", "Female", "Prefer not to say", ""],
+      default: "",
+    },
+  },
+  { timestamps: true }
+);
+
+export default mongoose.model("User", userSchema);
