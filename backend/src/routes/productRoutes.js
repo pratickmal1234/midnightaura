@@ -3,7 +3,7 @@ import express from "express"
 import { adminLoginSchema, validateAdmin } from "../Validation/adminValidation.js"
 import { loginAdmin, logoutAdmin, registerAdmin } from "../controller/admin/adminControllers.js"
 import { verifyAdmin } from "../middleware/verifyAdmin.js"
-import { addProduct, getProducts, updateProduct } from "../controller/admin/productController.js"
+import { addProduct, fetchOrderById, fetchOrders, getProducts, updateProduct } from "../controller/admin/productController.js"
 import upload from "../middleware/upload.js";
 const productRoute = express.Router()
 
@@ -25,5 +25,6 @@ productRoute.put(
   updateProduct
 );
 productRoute.get("/fetchProduct", getProducts);
-
+productRoute.get("/fetchOrders", fetchOrders);
+productRoute.get("/fetchOrders/:orderId", fetchOrderById);
 export default productRoute;

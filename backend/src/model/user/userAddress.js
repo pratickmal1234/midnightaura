@@ -1,49 +1,35 @@
-// models/userAddress.model.js
+// model/user/userAddress.js
 import mongoose from "mongoose";
+
+const locationSchema = new mongoose.Schema(
+  {
+    lat:   { type: Number, required: true },
+    lng:   { type: Number, required: true },
+    label: { type: String, default: "" },
+  },
+  { _id: false }
+);
 
 const userAddressSchema = new mongoose.Schema(
   {
-    // ── Reference to the user ─────────────────────────────────────
-    userEmail: {
-      type: String,
-      required: true,
-      ref: "User",       // logical reference for populate via email
-      unique: true,      // one address doc per user (1-to-1)
-      lowercase: true,
-      trim: true,
-    },
+    userId:       { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    userEmail:    { type: String, required: true, index: true },
+    customerId:   { type: String },
+    username:     { type: String },
 
-    // ── Address fields (empty by default) ────────────────────────
-    addressLine1: {
-      type: String,
-      default: "",
-    },
-    addressLine2: {
-      type: String,
-      default: "",
-    },
-    city: {
-      type: String,
-      default: "",
-    },
-     district: {
-      type: String,
-      default: "",
-    },
-    state: {
-      type: String,
-      default: "",
-    },
-    pincode: {
-      type: String,
-      default: "",
-    },
-    country: {
-      type: String,
-      default: "India",
-    },
+    addressLine1: { type: String, default: "" },
+    addressLine2: { type: String, default: "" },
+    city:         { type: String, default: "" },
+    district:     { type: String, default: "" },
+    state:        { type: String, default: "" },
+    pincode:      { type: String, default: "" },
+    country:      { type: String, default: "India" },
+
+    // GPS pin set from the map picker — null until user sets it
+    location:     { type: locationSchema, default: null },
   },
   { timestamps: true }
 );
 
-export default mongoose.model("UserAddress", userAddressSchema);
+const UserAddress = mongoose.model("UserAddress", userAddressSchema);
+export default UserAddress;

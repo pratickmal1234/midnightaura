@@ -3,7 +3,9 @@ import Product from "../../model/admin/productSchema.js";
 import ProductDetails from "../../model/admin/productDetails.js";
 import fs from "fs";
 import path from "path";
-
+import Order from "../../model/order/order.js";
+import User from "../../model/user/userSchema.js"
+import UserAddress from "../../model/user/userAddress.js"
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const SIZE_ONLY_CATEGORIES = ["Hoodies", "Oversized"];
@@ -388,5 +390,108 @@ export const getProducts = async (req, res) => {
   } catch (error) {
     console.error("getProducts error:", error);
     return res.status(500).json({ success: false, message: "Internal server error.", error: error.message });
+  }
+};
+
+
+
+
+export const fetchOrders = async (req, res) => {
+  try {
+    // 1. Fetch all orders
+    const orders = await Order.find({})
+  .sort({ createdAt: -1 }) // latest orders first
+  .lean();
+
+    if (!orders || orders.length === 0) {
+      return res.status(404).json({ message: "No orders found" });
+    }
+
+    // 2. Enrich each order with product, product details, customer, and address
+    const enrichedOrders = await Promise.all(
+      orders.map(async (order) => {
+
+        // Fetch product from Product schema
+        const product = await Product.findOne({ productId: order.productId }).lean();
+
+        // Fetch product details from ProductDetails schema
+        const productDetails = await ProductDetails.findOne({ productId: order.productId }).lean();
+
+        // Fetch customer from User schema
+        const customer = await User.findOne({ customerId: order.customerId })
+          .select("-password -token") // exclude sensitive fields
+          .lean();
+
+        // Fetch customer address from UserAddress schema
+        const address = await UserAddress.findOne({ customerId: order.customerId }).lean();
+
+        return {
+          ...order,
+          product: product || null,
+          productDetails: productDetails?.details || [],
+          customer: customer || null,
+          deliveryAddress: address || null,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: enrichedOrders.length,
+      orders: enrichedOrders,
+    });
+
+  } catch (error) {
+    console.error("fetchOrders error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch orders",
+      error: error.message,
+    });
+  }
+};
+
+
+export const fetchOrderById = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    // 1. Fetch order by orderId
+    const order = await Order.findOne({ orderId }).lean();
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // 2. Enrich order with product, product details, customer, and address
+    const [product, productDetails, customer, address] = await Promise.all([
+      Product.findOne({ productId: order.productId }).lean(),
+      ProductDetails.findOne({ productId: order.productId }).lean(),
+      User.findOne({ customerId: order.customerId })
+        .select("-password -token")
+        .lean(),
+      UserAddress.findOne({ customerId: order.customerId }).lean(),
+    ]);
+
+    const enrichedOrder = {
+      ...order,
+      product: product || null,
+      productDetails: productDetails?.details || [],
+      customer: customer || null,
+      deliveryAddress: address || null,
+    };
+
+    return res.status(200).json({
+      success: true,
+      order: enrichedOrder,
+    });
+
+  } catch (error) {
+    console.error("fetchOrderById error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch order",
+      error: error.message,
+    });
   }
 };

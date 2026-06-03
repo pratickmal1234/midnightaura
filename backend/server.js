@@ -8,10 +8,12 @@ import userRout from "./src/routes/userRoutes.js";
 import productRoute from "./src/routes/productRoutes.js";
 import productBuyRoutes from "./src/routes/productBuyRoutes.js";
 import path from "path";
+import deliveryProductRoute from "./src/routes/deliveryProductRoute.js";
+import cartRouter from "./src/routes/cartRoute.js";
 const app = express(); 
 const allowedOrigins = [
 
-  "http://localhost:3000","https://feedbacker-student.vercel.app"
+  "http://localhost:3000","https://feedbacker-student.vercel.app","https://medocart.in"
 ];
 
 dbConnect();
@@ -29,7 +31,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "DELETE","PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
 app.use(express.urlencoded({ extended: true }))
@@ -44,6 +46,8 @@ app.use("/admin", router);
 app.use("/user", userRout);
 app.use("/product",productRoute);
 app.use("/productBuy", productBuyRoutes);
+app.use("/delivery", deliveryProductRoute);
+app.use("/cart", cartRouter);
 
 app.listen(port, () => {
   console.log(`the server is running on ${port}`);
