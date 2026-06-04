@@ -18,7 +18,7 @@ const allowedOrigins = [
 
 dbConnect();
 
-const port = process.env.port || 6000
+const port = process.env.PORT || 6000
 dbConnect()
 app.use(cors({
   origin: function (origin, callback) {
