@@ -13,7 +13,7 @@ import cartRouter from "./src/routes/cartRoute.js";
 const app = express(); 
 const allowedOrigins = [
 
-  "http://localhost:3000","https://feedbacker-student.vercel.app","https://medocart.in","https://chomoktomok.com/"
+  "http://localhost:3000","https://feedbacker-student.vercel.app","https://medocart.in","https://chomoktomok.com"
 ];
 
 dbConnect();
