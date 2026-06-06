@@ -1,11 +1,11 @@
 // controllers/productController.js
-import Product from "../../model/admin/productSchema.js";
+import Product        from "../../model/admin/productSchema.js";
 import ProductDetails from "../../model/admin/productDetails.js";
-import fs from "fs";
-import path from "path";
-import Order from "../../model/order/order.js";
-import User from "../../model/user/userSchema.js"
-import UserAddress from "../../model/user/userAddress.js"
+import Order          from "../../model/order/order.js";
+import User           from "../../model/user/userSchema.js";
+import UserAddress    from "../../model/user/userAddress.js";
+import cloudinary     from "../../config/cloudinaryConfig.js";
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const SIZE_ONLY_CATEGORIES = ["Hoodies", "Oversized"];
@@ -25,7 +25,7 @@ const computeFinalPrice = (price, discount) => {
   return Math.round(price * (1 - discount / 100));
 };
 
-// Generates next productId like MA001, MA002, ...
+// Generates next productId like MA001, MA002, …
 const generateProductId = async () => {
   const last = await Product.findOne({}, { productId: 1 })
     .sort({ createdAt: -1 })
@@ -35,6 +35,28 @@ const generateProductId = async () => {
 
   const num = parseInt(last.productId.replace("MA", ""), 10);
   return "MA" + String(num + 1).padStart(3, "0");
+};
+
+/**
+ * Delete an image from Cloudinary by its secure_url or public_id.
+ * We store secure_url in the DB, so we derive the public_id from it.
+ *
+ * Example URL:
+ *   https://res.cloudinary.com/<cloud>/image/upload/v123456/uploads/images/abc.jpg
+ * public_id → uploads/images/abc   (no extension)
+ */
+const deleteCloudinaryImage = async (url) => {
+  try {
+    // Extract the portion after "/upload/" and strip the version segment (v12345/)
+    const afterUpload = url.split("/upload/")[1];          // "v123456/uploads/images/abc.jpg"
+    const withoutVersion = afterUpload.replace(/^v\d+\//, ""); // "uploads/images/abc.jpg"
+    const publicId = withoutVersion.replace(/\.[^/.]+$/, "");  // "uploads/images/abc"
+
+    await cloudinary.uploader.destroy(publicId);
+  } catch (err) {
+    // Non-fatal — log and continue
+    console.warn("Cloudinary delete warning:", err.message);
+  }
 };
 
 // ─── Add Product ──────────────────────────────────────────────────────────────
@@ -48,26 +70,40 @@ export const addProduct = async (req, res) => {
       price,
       discount,
       estimatedDelivery,
-      totalStock,       // used when category has no sizes
-      stockBySize,      // JSON string or object
-      productColor,     // JSON string or object  { name, hex }
-      details,          // JSON string or array   [{ field, value }]
+      totalStock,
+      stockBySize,
+      productColor,
+      details,
     } = req.body;
 
     // ── Validate required fields ──
     if (!productName || !category || !price) {
-      // Clean up any uploaded files on validation failure
-      if (req.files) req.files.forEach((f) => fs.unlinkSync(f.path));
-      return res.status(400).json({ success: false, message: "productName, category, and price are required." });
+      // Rollback: delete any images already uploaded to Cloudinary
+      if (req.files?.length) {
+        await Promise.all(
+          req.files.map((f) => cloudinary.uploader.destroy(f.filename))
+        );
+      }
+      return res.status(400).json({
+        success: false,
+        message: "productName, category, and price are required.",
+      });
     }
 
     // ── Validate images (exactly 3 required) ──
     if (!req.files || req.files.length !== 3) {
-      if (req.files) req.files.forEach((f) => fs.unlinkSync(f.path));
-      return res.status(400).json({ success: false, message: "Exactly 3 product images are required." });
+      if (req.files?.length) {
+        await Promise.all(
+          req.files.map((f) => cloudinary.uploader.destroy(f.filename))
+        );
+      }
+      return res.status(400).json({
+        success: false,
+        message: "Exactly 3 product images are required.",
+      });
     }
 
-    // ── Parse JSON body fields (sent as strings from multipart/form-data) ──
+    // ── Parse JSON body fields ──
     const parsedStockBySize = stockBySize
       ? typeof stockBySize === "string" ? JSON.parse(stockBySize) : stockBySize
       : null;
@@ -100,10 +136,9 @@ export const addProduct = async (req, res) => {
     // ── Generate productId ──
     const productId = await generateProductId();
 
-    // ── Image paths (store relative paths, e.g. /uploads/products/filename.jpg) ──
-    const imagePaths = req.files.map(
-      (f) => "/uploads/products/" + path.basename(f.path)
-    );
+    // ── Cloudinary returns secure_url on each uploaded file ──
+    // multer-storage-cloudinary attaches `path` (secure_url) and `filename` (public_id)
+    const imagePaths = req.files.map((f) => f.path); // secure_url from Cloudinary
 
     // ── Create Product ──
     const newProduct = await Product.create({
@@ -118,7 +153,7 @@ export const addProduct = async (req, res) => {
       totalStock:        computedTotalStock,
       stockBySize:       needsSizes(category) ? finalStockBySize : undefined,
       productColor:      parsedColor,
-      productImages:     imagePaths,
+      productImages:     imagePaths,  // Cloudinary secure URLs
       status:            computeStatus(computedTotalStock),
     });
 
@@ -128,10 +163,7 @@ export const addProduct = async (req, res) => {
     );
 
     if (filteredDetails.length > 0) {
-      await ProductDetails.create({
-        productId,
-        details: filteredDetails,
-      });
+      await ProductDetails.create({ productId, details: filteredDetails });
     }
 
     return res.status(201).json({
@@ -147,16 +179,22 @@ export const addProduct = async (req, res) => {
         finalPrice:    newProduct.finalPrice,
         totalStock:    newProduct.totalStock,
         status:        newProduct.status,
-        productImages: newProduct.productImages,
+        productImages: newProduct.productImages, // Cloudinary URLs
       },
     });
   } catch (error) {
-    // Clean up uploaded files on unexpected error
-    if (req.files) req.files.forEach((f) => {
-      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-    });
+    // Rollback Cloudinary uploads on unexpected error
+    if (req.files?.length) {
+      await Promise.all(
+        req.files.map((f) => cloudinary.uploader.destroy(f.filename))
+      );
+    }
     console.error("addProduct error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error.", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
   }
 };
 
@@ -168,8 +206,16 @@ export const updateProduct = async (req, res) => {
 
     const existing = await Product.findOne({ productId });
     if (!existing) {
-      if (req.files) req.files.forEach((f) => fs.unlinkSync(f.path));
-      return res.status(404).json({ success: false, message: `Product ${productId} not found.` });
+      // Rollback any newly uploaded images
+      if (req.files?.length) {
+        await Promise.all(
+          req.files.map((f) => cloudinary.uploader.destroy(f.filename))
+        );
+      }
+      return res.status(404).json({
+        success: false,
+        message: `Product ${productId} not found.`,
+      });
     }
 
     const {
@@ -183,9 +229,7 @@ export const updateProduct = async (req, res) => {
       stockBySize,
       productColor,
       details,
-      // Client can send "replaceImages" = "true" to replace all 3 images,
-      // or send nothing to keep existing images
-      replaceImages,
+      replaceImages, // "true" → replace all 3 images
     } = req.body;
 
     // ── Parse JSON fields ──
@@ -201,7 +245,7 @@ export const updateProduct = async (req, res) => {
       ? typeof details === "string" ? JSON.parse(details) : details
       : null;
 
-    // ── Resolve category (use incoming or fall back to existing) ──
+    // ── Resolve category ──
     const resolvedCategory = category || existing.category;
 
     // ── Compute stock ──
@@ -222,26 +266,23 @@ export const updateProduct = async (req, res) => {
     }
 
     // ── Handle image replacement ──
-    let imagePaths = existing.productImages;
+    let imagePaths = existing.productImages; // default: keep existing Cloudinary URLs
 
     if (replaceImages === "true" && req.files && req.files.length === 3) {
-      // Delete old images from disk
-      existing.productImages.forEach((imgPath) => {
-        const abs = path.join(process.cwd(), imgPath);
-        if (fs.existsSync(abs)) fs.unlinkSync(abs);
-      });
-      imagePaths = req.files.map(
-        (f) => "/uploads/products/" + path.basename(f.path)
+      // Delete old images from Cloudinary
+      await Promise.all(existing.productImages.map(deleteCloudinaryImage));
+
+      // Use newly uploaded Cloudinary URLs
+      imagePaths = req.files.map((f) => f.path);
+    } else if (req.files?.length > 0) {
+      // Discard accidentally uploaded files from Cloudinary
+      await Promise.all(
+        req.files.map((f) => cloudinary.uploader.destroy(f.filename))
       );
-    } else if (req.files && req.files.length > 0) {
-      // Clean up any accidentally uploaded files
-      req.files.forEach((f) => {
-        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-      });
     }
 
     // ── Compute price fields ──
-    const resolvedPrice    = price !== undefined ? Number(price) : existing.price;
+    const resolvedPrice    = price    !== undefined ? Number(price)    : existing.price;
     const resolvedDiscount = discount !== undefined ? Number(discount) : existing.discount;
 
     // ── Update Product ──
@@ -259,7 +300,7 @@ export const updateProduct = async (req, res) => {
           totalStock:        computedTotalStock,
           stockBySize:       needsSizes(resolvedCategory) ? finalStockBySize : existing.stockBySize,
           productColor:      parsedColor              || existing.productColor,
-          productImages:     imagePaths,
+          productImages:     imagePaths,              // Cloudinary URLs
           status:            computeStatus(computedTotalStock),
         },
       },
@@ -292,15 +333,21 @@ export const updateProduct = async (req, res) => {
         finalPrice:    updatedProduct.finalPrice,
         totalStock:    updatedProduct.totalStock,
         status:        updatedProduct.status,
-        productImages: updatedProduct.productImages,
+        productImages: updatedProduct.productImages, // Cloudinary URLs
       },
     });
   } catch (error) {
-    if (req.files) req.files.forEach((f) => {
-      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-    });
+    if (req.files?.length) {
+      await Promise.all(
+        req.files.map((f) => cloudinary.uploader.destroy(f.filename))
+      );
+    }
     console.error("updateProduct error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error.", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
   }
 };
 
@@ -340,29 +387,29 @@ export const getProducts = async (req, res) => {
       Product.countDocuments(filter),
     ]);
 
-    // ── Attach product details for each product ──
-    const productIds   = products.map((p) => p.productId);
-    const detailsDocs  = await ProductDetails.find(
+    // ── Attach product details ──
+    const productIds  = products.map((p) => p.productId);
+    const detailsDocs = await ProductDetails.find(
       { productId: { $in: productIds } }
     ).lean();
 
-    // Map details by productId for quick lookup
     const detailsMap = {};
     detailsDocs.forEach((d) => { detailsMap[d.productId] = d.details; });
 
-    // ── Shape response to match frontend schema ──
+    // ── Shape response ──
+    // productImages are already Cloudinary secure_urls — return as-is
     const shaped = products.map((p) => ({
-      id:           p.productId,
-      name:         p.productName,
-      category:     p.category,
-      subCategory:  p.subCategory,
-      price:        p.price,
-      discount:     p.discount,
-      finalPrice:   p.finalPrice,
-      delivery:     p.estimatedDelivery,
-      stock:        p.totalStock,
-      status:       p.status,
-      sizeStock:    p.stockBySize
+      id:          p.productId,
+      name:        p.productName,
+      category:    p.category,
+      subCategory: p.subCategory,
+      price:       p.price,
+      discount:    p.discount,
+      finalPrice:  p.finalPrice,
+      delivery:    p.estimatedDelivery,
+      stock:       p.totalStock,
+      status:      p.status,
+      sizeStock:   p.stockBySize
         ? {
             S:   p.stockBySize.s,
             M:   p.stockBySize.m,
@@ -372,7 +419,7 @@ export const getProducts = async (req, res) => {
           }
         : null,
       color:   p.productColor?.name ? p.productColor : null,
-      images:  p.productImages,
+      images:  p.productImages,   // Cloudinary URLs — ready to use in <img src>
       details: detailsMap[p.productId] || [],
     }));
 
@@ -389,47 +436,38 @@ export const getProducts = async (req, res) => {
     });
   } catch (error) {
     console.error("getProducts error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error.", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
   }
 };
 
-
-
+// ─── Fetch All Orders ─────────────────────────────────────────────────────────
 
 export const fetchOrders = async (req, res) => {
   try {
-    // 1. Fetch all orders
-    const orders = await Order.find({})
-  .sort({ createdAt: -1 }) // latest orders first
-  .lean();
+    const orders = await Order.find({}).sort({ createdAt: -1 }).lean();
 
     if (!orders || orders.length === 0) {
       return res.status(404).json({ message: "No orders found" });
     }
 
-    // 2. Enrich each order with product, product details, customer, and address
     const enrichedOrders = await Promise.all(
       orders.map(async (order) => {
-
-        // Fetch product from Product schema
-        const product = await Product.findOne({ productId: order.productId }).lean();
-
-        // Fetch product details from ProductDetails schema
+        const product        = await Product.findOne({ productId: order.productId }).lean();
         const productDetails = await ProductDetails.findOne({ productId: order.productId }).lean();
-
-        // Fetch customer from User schema
-        const customer = await User.findOne({ customerId: order.customerId })
-          .select("-password -token") // exclude sensitive fields
+        const customer       = await User.findOne({ customerId: order.customerId })
+          .select("-password -token")
           .lean();
-
-        // Fetch customer address from UserAddress schema
-        const address = await UserAddress.findOne({ customerId: order.customerId }).lean();
+        const address        = await UserAddress.findOne({ customerId: order.customerId }).lean();
 
         return {
           ...order,
-          product: product || null,
-          productDetails: productDetails?.details || [],
-          customer: customer || null,
+          product:         product || null,
+          productDetails:  productDetails?.details || [],
+          customer:        customer || null,
           deliveryAddress: address || null,
         };
       })
@@ -437,33 +475,30 @@ export const fetchOrders = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      count: enrichedOrders.length,
-      orders: enrichedOrders,
+      count:   enrichedOrders.length,
+      orders:  enrichedOrders,
     });
-
   } catch (error) {
     console.error("fetchOrders error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to fetch orders",
-      error: error.message,
+      error:   error.message,
     });
   }
 };
 
+// ─── Fetch Order By ID ────────────────────────────────────────────────────────
 
 export const fetchOrderById = async (req, res) => {
   try {
     const { orderId } = req.params;
 
-    // 1. Fetch order by orderId
     const order = await Order.findOne({ orderId }).lean();
-
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // 2. Enrich order with product, product details, customer, and address
     const [product, productDetails, customer, address] = await Promise.all([
       Product.findOne({ productId: order.productId }).lean(),
       ProductDetails.findOne({ productId: order.productId }).lean(),
@@ -475,23 +510,19 @@ export const fetchOrderById = async (req, res) => {
 
     const enrichedOrder = {
       ...order,
-      product: product || null,
-      productDetails: productDetails?.details || [],
-      customer: customer || null,
+      product:         product || null,
+      productDetails:  productDetails?.details || [],
+      customer:        customer || null,
       deliveryAddress: address || null,
     };
 
-    return res.status(200).json({
-      success: true,
-      order: enrichedOrder,
-    });
-
+    return res.status(200).json({ success: true, order: enrichedOrder });
   } catch (error) {
     console.error("fetchOrderById error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to fetch order",
-      error: error.message,
+      error:   error.message,
     });
   }
 };
