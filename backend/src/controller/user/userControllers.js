@@ -509,10 +509,11 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
       return;
     }
 
-    const response = await admin.messaging().sendEachForMulticast({
-      tokens:       user.fcmTokens,
+    console.log(`[sendNotification] Sending to ${user.fcmTokens.length} token(s):`, user.fcmTokens);
+
+    const message = {
+      tokens: user.fcmTokens,
       notification: { title, body },
-      data,
       webpush: {
         notification: {
           title,
@@ -520,31 +521,54 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
           icon: "https://www.chomoktomok.com/Images/chomoktomok-app.png",
         },
       },
+    };
+
+    // Only attach data if it has keys (FCM rejects non-string values)
+    if (Object.keys(data).length > 0) {
+      message.data = Object.fromEntries(
+        Object.entries(data).map(([k, v]) => [k, String(v)])
+      );
+    }
+
+    const response = await admin.messaging().sendEachForMulticast(message);
+
+    console.log(
+      `[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`
+    );
+
+    // Log every failure with its exact error code and prune stale tokens
+    const staleTokens = [];
+    response.responses.forEach((r, i) => {
+      if (!r.success) {
+        const code = r.error?.code;
+        console.error(
+          `[sendNotification] Token[${i}] FAILED — code: ${code} | message: ${r.error?.message}`
+        );
+        console.error(`[sendNotification] Bad token: ${user.fcmTokens[i]}`);
+
+        // These codes mean the token is permanently invalid — safe to prune
+        if (
+          code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token" ||
+          code === "messaging/invalid-argument"
+        ) {
+          staleTokens.push(user.fcmTokens[i]);
+        }
+      }
     });
 
-    console.log(`[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`);
-
-    // Prune invalid tokens
-    const invalidTokens = [];
-    response.responses.forEach((resp, idx) => {
-      if (!resp.success) invalidTokens.push(user.fcmTokens[idx]);
-    });
-
-    if (invalidTokens.length) {
+    if (staleTokens.length > 0) {
       await User.findOneAndUpdate(
         { customerId },
-        { $pull: { fcmTokens: { $in: invalidTokens } } }
+        { $pull: { fcmTokens: { $in: staleTokens } } }
       );
-      console.log("[sendNotification] Pruned invalid tokens:", invalidTokens);
+      console.log(`[sendNotification] Pruned ${staleTokens.length} stale token(s):`, staleTokens);
     }
   } catch (error) {
     console.error("[sendNotification] error:", error.message);
   }
 };
 
-// ── Send Notification HTTP Handler ─────────────────────────────────
-// This is what the route should point to:
-//   userRout.post("/sendNotification", sendNotificationHandler)
 export const sendNotificationHandler = async (req, res) => {
   try {
     const { customerId, title, body, data } = req.body;
@@ -566,3 +590,7 @@ export const sendNotificationHandler = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ── Send Notification HTTP Handler ─────────────────────────────────
+// This is what the route should point to:
+//   userRout.post("/sendNotification", sendNotificationHandler)
