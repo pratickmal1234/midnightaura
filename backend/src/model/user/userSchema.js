@@ -48,6 +48,10 @@ const userSchema = new mongoose.Schema(
       enum: ["Male", "Female", "Prefer not to say", ""],
       default: "",
     },
+    fcmTokens: {
+   type:    [String],
+  default: [],
+},
   },
   { timestamps: true }
 );
