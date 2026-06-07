@@ -13,9 +13,10 @@ import cartRouter      from "./src/routes/cartRoute.js";
 const app = express();
 
 const allowedOrigins = [
+  "https://www.chomoktomok.com",
   "http://localhost:3000",
   "https://feedbacker-student.vercel.app",
-  "https://www.chomoktomok.com",
+  
 ];
 
 dbConnect();

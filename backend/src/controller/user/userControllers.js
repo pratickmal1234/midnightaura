@@ -537,33 +537,9 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
     );
 
     // Log every failure with its exact error code and prune stale tokens
-    const staleTokens = [];
-    response.responses.forEach((r, i) => {
-      if (!r.success) {
-        const code = r.error?.code;
-        console.error(
-          `[sendNotification] Token[${i}] FAILED — code: ${code} | message: ${r.error?.message}`
-        );
-        console.error(`[sendNotification] Bad token: ${user.fcmTokens[i]}`);
+   
 
-        // These codes mean the token is permanently invalid — safe to prune
-        if (
-          code === "messaging/registration-token-not-registered" ||
-          code === "messaging/invalid-registration-token" ||
-          code === "messaging/invalid-argument"
-        ) {
-          staleTokens.push(user.fcmTokens[i]);
-        }
-      }
-    });
-
-    if (staleTokens.length > 0) {
-      await User.findOneAndUpdate(
-        { customerId },
-        { $pull: { fcmTokens: { $in: staleTokens } } }
-      );
-      console.log(`[sendNotification] Pruned ${staleTokens.length} stale token(s):`, staleTokens);
-    }
+  
   } catch (error) {
     console.error("[sendNotification] error:", error.message);
   }
