@@ -6,7 +6,7 @@ import { otpSent } from "../../sendEmail/otpSend.js";
 import User from "../../model/user/userSchema.js";
 import UserAddress from "../../model/user/userAddress.js";
 import Feedback from "../../model/user/userFeedback.js";
-
+import admin from "../../config/firebaseAdmin.js";
 const MAX_IMAGE_B64_LEN = 3_700_000; // ~2.7 MB base64
 
 function isValidImageDataUrl(str) {
@@ -304,12 +304,6 @@ export const resetPassword = async (req, res) => {
 };
 
 // ── Submit Feedback ────────────────────────────────────────────────
-// FIX: productId is stored as-is from req.body.
-// The frontend must send the same productId (product.productId) both
-// when SUBMITTING and when FETCHING feedback. Do NOT use the MongoDB _id
-// for this field — use the product's own productId field consistently.
-
-
 export const submitFeedback = async (req, res) => {
   try {
     const {
@@ -324,7 +318,6 @@ export const submitFeedback = async (req, res) => {
       imageComment,
     } = req.body;
 
-    // Validation
     if (!orderId || !productId || !customerId) {
       return res.status(400).json({
         success: false,
@@ -351,7 +344,6 @@ export const submitFeedback = async (req, res) => {
     let commentFeedback = null;
     let imageFeedback = null;
 
-    // Comment Feedback
     if (feedbackType === "comment") {
       if (!title?.trim() || !description?.trim()) {
         return res.status(400).json({
@@ -359,14 +351,9 @@ export const submitFeedback = async (req, res) => {
           message: "Title and description are required.",
         });
       }
-
-      commentFeedback = {
-        title: title.trim(),
-        description: description.trim(),
-      };
+      commentFeedback = { title: title.trim(), description: description.trim() };
     }
 
-    // Image Feedback
     if (feedbackType === "image") {
       if (!isValidImageDataUrl(croppedImage)) {
         return res.status(400).json({
@@ -374,32 +361,23 @@ export const submitFeedback = async (req, res) => {
           message: "Valid cropped image is required.",
         });
       }
-
       if (!imageComment?.trim()) {
         return res.status(400).json({
           success: false,
           message: "Image comment is required.",
         });
       }
-
-      imageFeedback = {
-        imageData: croppedImage,
-        imageComment: imageComment.trim(),
-      };
+      imageFeedback = { imageData: croppedImage, imageComment: imageComment.trim() };
     }
 
-    // INSERT NEW FEEDBACK
     const feedback = await Feedback.create({
       orderId,
       productId,
       customerId,
-
       feedbackType,
       rating: ratingNum,
-
       commentFeedback,
       imageFeedback,
-
       submittedAt: new Date(),
       isVisible: true,
     });
@@ -411,24 +389,15 @@ export const submitFeedback = async (req, res) => {
     });
   } catch (err) {
     console.error("submitFeedback error:", err);
-
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error.",
-    });
+    return res.status(500).json({ success: false, message: "Internal server error." });
   }
 };
 
 // ── Get Feedback By Product ────────────────────────────────────────
-// FIX: The route param :productId must be the same product.productId
-// string that was stored during submitFeedback.
-// The frontend decrypts the URL param to get the MongoDB _id, but
-// feedback was stored using product.productId — so we query BOTH fields
-// to be safe, and also return the stored productId for debugging.
 export const getFeedbackByProduct = async (req, res) => {
   try {
     const { productId } = req.params;
-     console.log("Product Id : ",productId);
+    console.log("Product Id : ", productId);
     if (!productId) {
       return res.status(400).json({ success: false, message: "productId is required" });
     }
@@ -437,18 +406,9 @@ export const getFeedbackByProduct = async (req, res) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 5));
     const skip  = (page - 1) * limit;
 
-    // ── KEY FIX ───────────────────────────────────────────────────
-    // During submitFeedback the frontend sends product.productId
-    // (the product's own ID field, e.g. "PROD123"), NOT the MongoDB _id.
-    // During fetchFeedback the frontend decrypts the URL to get
-    // the MongoDB _id and passes that — causing a mismatch.
-    //
-    // Solution: query by BOTH so it works regardless of which ID is sent.
-    // Long-term fix: standardize the frontend to always send product.productId.
     const { default: mongoose } = await import("mongoose");
     const isObjectId = mongoose.Types.ObjectId.isValid(productId);
 
-    // Build a query that matches whichever ID format was stored
     const baseFilter = {
       isVisible: true,
       ...(isObjectId
@@ -456,28 +416,18 @@ export const getFeedbackByProduct = async (req, res) => {
         : { productId }),
     };
 
-    const allFeedback = await Feedback.find(baseFilter)
-      .sort({ submittedAt: -1 })
-      .lean();
-
+    const allFeedback = await Feedback.find(baseFilter).sort({ submittedAt: -1 }).lean();
     const totalCount = allFeedback.length;
 
-    // ── Rating statistics ─────────────────────────────────────────
     const ratingCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     let totalRating = 0;
-
     allFeedback.forEach((item) => {
       totalRating += item.rating || 0;
       if (ratingCounts[item.rating] !== undefined) ratingCounts[item.rating]++;
     });
 
-    const avgRating = totalCount > 0
-      ? Number((totalRating / totalCount).toFixed(1))
-      : 0;
-
-    // ── Split by type ─────────────────────────────────────────────
+    const avgRating = totalCount > 0 ? Number((totalRating / totalCount).toFixed(1)) : 0;
     const imageFeedback = allFeedback.filter((f) => f.feedbackType === "image");
-
     const allComments = allFeedback.filter((f) => f.feedbackType === "comment");
     const commentFeedback = allComments.slice(skip, skip + limit);
     const totalCommentFeedback = allComments.length;
@@ -495,5 +445,124 @@ export const getFeedbackByProduct = async (req, res) => {
   } catch (error) {
     console.error("getFeedbackByProduct error:", error);
     return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+// ── Save FCM Token ─────────────────────────────────────────────────
+export const saveFcmToken = async (req, res) => {
+  try {
+    const { fcmToken, email } = req.body;
+
+    if (!fcmToken)
+      return res.status(400).json({ success: false, message: "FCM token is required." });
+    if (!email)
+      return res.status(400).json({ success: false, message: "Email is required." });
+
+    await User.findOneAndUpdate(
+      { email: email.toLowerCase().trim() },
+      { $addToSet: { fcmTokens: fcmToken } },
+      { new: true }
+    );
+
+    return res.status(200).json({ success: true, message: "FCM token saved." });
+  } catch (error) {
+    console.error("saveFcmToken error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ── Remove FCM Token ───────────────────────────────────────────────
+export const removeFcmToken = async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+
+    if (!fcmToken)
+      return res.status(400).json({ success: false, message: "FCM token is required." });
+
+    const { customerId } = req.user;
+
+    await User.findOneAndUpdate(
+      { customerId },
+      { $pull: { fcmTokens: fcmToken } },
+      { new: true }
+    );
+
+    return res.status(200).json({ success: true, message: "FCM token removed." });
+  } catch (error) {
+    console.error("removeFcmToken error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ── Send Notification (internal utility) ──────────────────────────
+// Pure async helper — used internally by other controllers.
+// NOT exported as an HTTP handler. Use sendNotificationHandler for the route.
+export const sendNotification = async (customerId, title, body, data = {}) => {
+  try {
+    console.log(`[sendNotification] customerId=${customerId} title="${title}"`);
+
+    const user = await User.findOne({ customerId }).lean();
+    console.log("[sendNotification] user found:", user ? user.email : "NOT FOUND");
+
+    if (!user?.fcmTokens?.length) {
+      console.warn("[sendNotification] No FCM tokens for customerId:", customerId);
+      return;
+    }
+
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens:       user.fcmTokens,
+      notification: { title, body },
+      data,
+      webpush: {
+        notification: {
+          title,
+          body,
+          icon: "https://www.chomoktomok.com/Images/chomoktomok-app.png",
+        },
+      },
+    });
+
+    console.log(`[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`);
+
+    // Prune invalid tokens
+    const invalidTokens = [];
+    response.responses.forEach((resp, idx) => {
+      if (!resp.success) invalidTokens.push(user.fcmTokens[idx]);
+    });
+
+    if (invalidTokens.length) {
+      await User.findOneAndUpdate(
+        { customerId },
+        { $pull: { fcmTokens: { $in: invalidTokens } } }
+      );
+      console.log("[sendNotification] Pruned invalid tokens:", invalidTokens);
+    }
+  } catch (error) {
+    console.error("[sendNotification] error:", error.message);
+  }
+};
+
+// ── Send Notification HTTP Handler ─────────────────────────────────
+// This is what the route should point to:
+//   userRout.post("/sendNotification", sendNotificationHandler)
+export const sendNotificationHandler = async (req, res) => {
+  try {
+    const { customerId, title, body, data } = req.body;
+
+    console.log("[sendNotificationHandler] body:", req.body);
+
+    if (!customerId || !title || !body) {
+      return res.status(400).json({
+        success: false,
+        message: "customerId, title, and body are required.",
+      });
+    }
+
+    await sendNotification(customerId, title, body, data ?? {});
+
+    return res.status(200).json({ success: true, message: "Notification dispatched." });
+  } catch (error) {
+    console.error("[sendNotificationHandler] error:", error.message);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
