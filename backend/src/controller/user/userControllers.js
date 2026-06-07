@@ -500,7 +500,7 @@ export const removeFcmToken = async (req, res) => {
 export const sendNotification = async (customerId, title, body, data = {}) => {
   try {
     console.log(`[sendNotification] customerId=${customerId} title="${title}"`);
-
+    
     const user = await User.findOne({ customerId }).lean();
     console.log("[sendNotification] user found:", user ? user.email : "NOT FOUND");
 
@@ -509,11 +509,10 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
       return;
     }
 
-    console.log(`[sendNotification] Sending to ${user.fcmTokens.length} token(s):`, user.fcmTokens);
-
-    const message = {
-      tokens: user.fcmTokens,
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens:       user.fcmTokens,
       notification: { title, body },
+      data,
       webpush: {
         notification: {
           title,
@@ -521,30 +520,21 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
           icon: "https://www.chomoktomok.com/Images/chomoktomok-app.png",
         },
       },
-    };
+    });
 
-    // Only attach data if it has keys (FCM rejects non-string values)
-    if (Object.keys(data).length > 0) {
-      message.data = Object.fromEntries(
-        Object.entries(data).map(([k, v]) => [k, String(v)])
-      );
-    }
+    console.log(`[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`);
 
-    const response = await admin.messaging().sendEachForMulticast(message);
+    // Prune invalid tokens
 
-    console.log(
-      `[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`
-    );
-
-    // Log every failure with its exact error code and prune stale tokens
-   
-
-  
+    
   } catch (error) {
     console.error("[sendNotification] error:", error.message);
   }
 };
 
+// ── Send Notification HTTP Handler ─────────────────────────────────
+// This is what the route should point to:
+//   userRout.post("/sendNotification", sendNotificationHandler)
 export const sendNotificationHandler = async (req, res) => {
   try {
     const { customerId, title, body, data } = req.body;
@@ -566,7 +556,3 @@ export const sendNotificationHandler = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ── Send Notification HTTP Handler ─────────────────────────────────
-// This is what the route should point to:
-//   userRout.post("/sendNotification", sendNotificationHandler)
