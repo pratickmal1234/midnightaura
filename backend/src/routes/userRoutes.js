@@ -1,7 +1,8 @@
 import express from "express"
 import { loginSchema, registerSchema, validateUser } from "../Validation/UserValidation.js"
-import { forgotPassword, getFeedbackByProduct, getProfile, login, Logout, Register, resetPassword, submitFeedback, UpdateAddress, UpdateProfile, verifyOtp } from "../controller/user/userControllers.js"
+import { forgotPassword, getFeedbackByProduct, getProfile, login, Logout, Register, removeFcmToken, resetPassword, saveFcmToken, submitFeedback, UpdateAddress, sendNotification,UpdateProfile, verifyOtp, sendNotificationHandler } from "../controller/user/userControllers.js"
 import { verifyUser } from "../middleware/verifyUser.js"
+
 
 const userRout = express.Router()
 
@@ -17,8 +18,9 @@ userRout.delete("/logout", verifyUser, Logout)
 userRout.post("/forgotPassword", forgotPassword)
 userRout.post("/verifyOtp", verifyOtp)
 userRout.post("/resetPassword", resetPassword)
-
-
+userRout.post("/saveFcmToken", saveFcmToken)
+userRout.post("/removeFcmToken", removeFcmToken)
+userRout.post("/sendNotification", sendNotificationHandler)
 
 
 
