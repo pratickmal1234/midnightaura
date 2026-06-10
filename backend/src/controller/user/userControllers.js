@@ -453,17 +453,34 @@ export const saveFcmToken = async (req, res) => {
   try {
     const { fcmToken, email } = req.body;
 
-    if (!fcmToken)
+    if (!fcmToken?.trim())
       return res.status(400).json({ success: false, message: "FCM token is required." });
-    if (!email)
+    if (!email?.trim())
       return res.status(400).json({ success: false, message: "Email is required." });
 
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Pull first, then add — ensures no duplicates AND removes stale copies of same token
     await User.findOneAndUpdate(
-      { email: email.toLowerCase().trim() },
-      { $addToSet: { fcmTokens: fcmToken } },
+      { email: normalizedEmail },
+      {
+        $pull: { fcmTokens: fcmToken },   // remove if already exists (avoid exact dup)
+      }
+    );
+    await User.findOneAndUpdate(
+      { email: normalizedEmail },
+      {
+        $push: {
+          fcmTokens: {
+            $each: [fcmToken],
+            $slice: -5,   // keep only last 5 tokens per user (prevents unbounded growth)
+          },
+        },
+      },
       { new: true }
     );
 
+    console.log(`[saveFcmToken] token saved for ${normalizedEmail}`);
     return res.status(200).json({ success: true, message: "FCM token saved." });
   } catch (error) {
     console.error("saveFcmToken error:", error);
@@ -495,12 +512,10 @@ export const removeFcmToken = async (req, res) => {
 };
 
 // ── Send Notification (internal utility) ──────────────────────────
-// Pure async helper — used internally by other controllers.
-// NOT exported as an HTTP handler. Use sendNotificationHandler for the route.
 export const sendNotification = async (customerId, title, body, data = {}) => {
   try {
     console.log(`[sendNotification] customerId=${customerId} title="${title}"`);
-    
+
     const user = await User.findOne({ customerId }).lean();
     console.log("[sendNotification] user found:", user ? user.email : "NOT FOUND");
 
@@ -509,32 +524,86 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
       return;
     }
 
-    const response = await admin.messaging().sendEachForMulticast({
-      tokens:       user.fcmTokens,
+    console.log(`[sendNotification] Sending to ${user.fcmTokens.length} token(s)`);
+
+    // FCM requires ALL data values to be strings
+    const stringifiedData = Object.fromEntries(
+      Object.entries(data).map(([k, v]) => [k, String(v)])
+    );
+
+    const message = {
+      tokens: user.fcmTokens,
       notification: { title, body },
-      data,
       webpush: {
         notification: {
           title,
           body,
           icon: "https://www.chomoktomok.com/Images/chomoktomok-app.png",
+          badge: "https://www.chomoktomok.com/Images/chomoktomok-app.png",
+          requireInteraction: false,
+        },
+        fcmOptions: {
+          link: "https://www.chomoktomok.com",
         },
       },
+      android: {
+        notification: {
+          icon: "chomoktomok_icon",
+          sound: "default",
+          priority: "high",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+            badge: 1,
+          },
+        },
+      },
+    };
+
+    if (Object.keys(stringifiedData).length > 0) {
+      message.data = stringifiedData;
+    }
+
+    const response = await admin.messaging().sendEachForMulticast(message);
+
+    console.log(
+      `[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`
+    );
+
+    // Log failures and prune stale tokens
+    const staleTokens = [];
+    response.responses.forEach((r, i) => {
+      if (!r.success) {
+        const code = r.error?.code;
+        console.error(
+          `[sendNotification] Token[${i}] FAILED — code: ${code} | message: ${r.error?.message}`
+        );
+        if (
+          code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token" ||
+          code === "messaging/invalid-argument"
+        ) {
+          staleTokens.push(user.fcmTokens[i]);
+        }
+      }
     });
 
-    console.log(`[sendNotification] ✅ success=${response.successCount} ❌ failed=${response.failureCount}`);
-
-    // Prune invalid tokens
-
-    
+    if (staleTokens.length > 0) {
+      await User.findOneAndUpdate(
+        { customerId },
+        { $pull: { fcmTokens: { $in: staleTokens } } }
+      );
+      console.log(`[sendNotification] Pruned ${staleTokens.length} stale token(s)`);
+    }
   } catch (error) {
     console.error("[sendNotification] error:", error.message);
   }
 };
 
 // ── Send Notification HTTP Handler ─────────────────────────────────
-// This is what the route should point to:
-//   userRout.post("/sendNotification", sendNotificationHandler)
 export const sendNotificationHandler = async (req, res) => {
   try {
     const { customerId, title, body, data } = req.body;
