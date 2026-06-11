@@ -453,38 +453,58 @@ export const saveFcmToken = async (req, res) => {
   try {
     const { fcmToken, email } = req.body;
 
-    if (!fcmToken?.trim())
-      return res.status(400).json({ success: false, message: "FCM token is required." });
-    if (!email?.trim())
-      return res.status(400).json({ success: false, message: "Email is required." });
+    if (!fcmToken?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "FCM token is required.",
+      });
+    }
+
+    if (!email?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required.",
+      });
+    }
 
     const normalizedEmail = email.toLowerCase().trim();
+    const token = fcmToken.trim();
 
-    // Pull first, then add — ensures no duplicates AND removes stale copies of same token
-    await User.findOneAndUpdate(
+    const user = await User.findOneAndUpdate(
       { email: normalizedEmail },
       {
-        $pull: { fcmTokens: fcmToken },   // remove if already exists (avoid exact dup)
-      }
-    );
-    await User.findOneAndUpdate(
-      { email: normalizedEmail },
-      {
-        $push: {
-          fcmTokens: {
-            $each: [fcmToken],
-            $slice: -5,   // keep only last 5 tokens per user (prevents unbounded growth)
-          },
+        $addToSet: {
+          fcmTokens: token, // Prevent duplicate tokens
         },
       },
-      { new: true }
+      {
+        new: true,
+      }
     );
 
-    console.log(`[saveFcmToken] token saved for ${normalizedEmail}`);
-    return res.status(200).json({ success: true, message: "FCM token saved." });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    console.log(
+      `[saveFcmToken] Token saved for ${normalizedEmail}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "FCM token saved successfully.",
+      tokens: user.fcmTokens,
+    });
   } catch (error) {
     console.error("saveFcmToken error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -548,7 +568,7 @@ export const sendNotification = async (customerId, title, body, data = {}) => {
       },
       android: {
         notification: {
-          icon: "chomoktomok_icon",
+          icon: "https://www.chomoktomok.com/Images/chomoktomok-app.png",
           sound: "default",
           priority: "high",
         },
