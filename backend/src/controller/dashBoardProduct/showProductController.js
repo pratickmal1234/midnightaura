@@ -9,27 +9,43 @@ import Return         from "../../model/order/returnSchema.js";
 // GET /productBuy/getProductsByCategory?category=Men&page=1&limit=10
 export const getProductsByCategory = async (req, res) => {
   try {
-    const { page = 1, limit = 10, category } = req.query;
+    const { page = 1, limit = 10, category, newArrivals } = req.query;
 
     const VALID_CATEGORIES = [
-      "Men","Women","Kids","Earrings","Necklaces","Oversized","Hoodies",
+      "Men", "Women", "Kids", "Earrings", "Necklaces", "Oversized", "Hoodies",
     ];
 
-    if (!category) {
-      return res.status(400).json({ success: false, message: "Category is required." });
-    }
-    if (!VALID_CATEGORIES.includes(category)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}`,
-      });
+    const isNewArrivals = newArrivals === "true";
+
+    // Category is required only for normal category fetches
+    if (!isNewArrivals) {
+      if (!category) {
+        return res.status(400).json({ success: false, message: "Category is required." });
+      }
+      if (!VALID_CATEGORIES.includes(category)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}`,
+        });
+      }
     }
 
     const pageNum  = Math.max(1, parseInt(page));
     const limitNum = Math.max(1, Math.min(50, parseInt(limit)));
     const skip     = (pageNum - 1) * limitNum;
 
-    const filter = { category, status: { $in: ["Active", "Low"] } };
+    // Build filter — no category constraint for New Arrivals
+    const filter = { status: { $in: ["Active", "Low"] } };
+
+    if (!isNewArrivals) {
+      filter.category = category;
+    }
+
+    if (isNewArrivals) {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      filter.createdAt = { $gte: thirtyDaysAgo };
+    }
 
     const [products, total] = await Promise.all([
       Product.find(filter, {
@@ -63,7 +79,7 @@ export const getProductsByCategory = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: {
-        category,
+        category: isNewArrivals ? "New Arrivals" : category,
         products: shaped,
         total,
         page:        pageNum,
@@ -77,7 +93,6 @@ export const getProductsByCategory = async (req, res) => {
     return res.status(500).json({ success: false, message: "Internal server error.", error: error.message });
   }
 };
-
 // ─── Get Single Product By ProductId ─────────────────────────────────────────
 // GET /productBuy/fetchProductById/:productId
 export const getProductById = async (req, res) => {
