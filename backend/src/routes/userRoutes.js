@@ -1,6 +1,6 @@
 import express from "express"
 import { loginSchema, registerSchema, validateUser } from "../Validation/UserValidation.js"
-import { forgotPassword, getFeedbackByProduct, getProfile, login, Logout, Register, removeFcmToken, resetPassword, saveFcmToken, submitFeedback, UpdateAddress, sendNotification,UpdateProfile, verifyOtp, sendNotificationHandler } from "../controller/user/userControllers.js"
+import { forgotPassword, getFeedbackByProduct, getProfile, login, Logout, Register, removeFcmToken, resetPassword, saveFcmToken, submitFeedback, UpdateAddress, sendNotification,UpdateProfile, verifyOtp, sendNotificationHandler, googleLogin } from "../controller/user/userControllers.js"
 import { verifyUser } from "../middleware/verifyUser.js"
 
 
@@ -13,6 +13,7 @@ userRout.post("/updateAddress",UpdateAddress)
 userRout.post("/submitFeedback",submitFeedback);
 userRout.get("/fetchFeedbackByProduct/:productId",getFeedbackByProduct);
 userRout.post("/login", validateUser(loginSchema), login)
+userRout.post("/googleLogin", googleLogin)
 userRout.delete("/logout", verifyUser, Logout)
 
 userRout.post("/forgotPassword", forgotPassword)

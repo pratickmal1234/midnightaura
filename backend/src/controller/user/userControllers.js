@@ -7,8 +7,9 @@ import User from "../../model/user/userSchema.js";
 import UserAddress from "../../model/user/userAddress.js";
 import Feedback from "../../model/user/userFeedback.js";
 import admin from "../../config/firebaseAdmin.js";
+import { OAuth2Client } from "google-auth-library";
 const MAX_IMAGE_B64_LEN = 3_700_000; // ~2.7 MB base64
-
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 function isValidImageDataUrl(str) {
   if (typeof str !== "string") return false;
   if (!str.startsWith("data:image/")) return false;
@@ -242,6 +243,99 @@ export const login = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+
+
+
+
+
+
+export const googleLogin = async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: "No token provided" });
+    }
+
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { email, given_name, family_name, picture } = payload;
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, "0");
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const year = String(now.getFullYear()).slice(-2);
+      const cleanName = (given_name || "USR").replace(/\s+/g, "").toUpperCase().slice(0, 3);
+      const uniqueNumber = Date.now().toString().slice(-5);
+      const customerId = `${cleanName}${day}${month}${year}${uniqueNumber}`;
+
+      user = await User.create({
+        username:   given_name,
+        email,
+        password:   await bcrypt.hash("google_login_user_" + email, 10),
+        customerId,
+        isVarifyed: true,
+        profilePic: picture,
+      });
+
+      await UserAddress.create({
+        userEmail: email,
+        customerId,
+        username: given_name,
+        userId: user._id,
+      });
+    }
+
+    const accessToken = jwt.sign(
+      { id: user._id },
+      process.env.USER_JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    const refreshToken = jwt.sign(
+      { id: user._id },
+      process.env.USER_JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    user.isLoged = true;
+    await user.save();
+
+    res.cookie("userToken", accessToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Google login successful",
+      accessToken,   // ← frontend needs this
+      refreshToken,
+      user: {
+        _id:   user._id,
+        email: user.email,
+        firstName: user.username || given_name,
+      },
+    });
+  } catch (error) {
+    console.error("googleLogin error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+
+
+
 
 // ── Logout ─────────────────────────────────────────────────────────
 export const Logout = async (req, res) => {
