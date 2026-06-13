@@ -511,12 +511,12 @@ export const saveFcmToken = async (req, res) => {
 // ── Remove FCM Token ───────────────────────────────────────────────
 export const removeFcmToken = async (req, res) => {
   try {
-    const { fcmToken } = req.body;
+    const { fcmToken ,customerId} = req.body;
 
-    if (!fcmToken)
-      return res.status(400).json({ success: false, message: "FCM token is required." });
+    if (!fcmToken || !customerId)
+      return res.status(400).json({ success: false, message: "FCM token and customerId is required." });
 
-    const { customerId } = req.user;
+  
 
     await User.findOneAndUpdate(
       { customerId },
