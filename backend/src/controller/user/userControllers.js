@@ -252,48 +252,49 @@ export const login = async (req, res) => {
 
 export const googleLogin = async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, userInfo } = req.body;
 
+    // ── Validate input ─────────────────────────────────────────────
     if (!token) {
       return res.status(400).json({ success: false, message: "No token provided" });
     }
 
-    const ticket = await client.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
+    if (!userInfo || !userInfo.email) {
+      return res.status(400).json({ success: false, message: "No user info provided" });
+    }
 
-    const payload = ticket.getPayload();
-    const { email, given_name, family_name, picture } = payload;
+    const { email, given_name, picture, sub } = userInfo;
 
+    // ── Find or create user ────────────────────────────────────────
     let user = await User.findOne({ email });
 
     if (!user) {
-      const now = new Date();
-      const day = String(now.getDate()).padStart(2, "0");
-      const month = String(now.getMonth() + 1).padStart(2, "0");
-      const year = String(now.getFullYear()).slice(-2);
-      const cleanName = (given_name || "USR").replace(/\s+/g, "").toUpperCase().slice(0, 3);
+      const now          = new Date();
+      const day          = String(now.getDate()).padStart(2, "0");
+      const month        = String(now.getMonth() + 1).padStart(2, "0");
+      const year         = String(now.getFullYear()).slice(-2);
+      const cleanName    = (given_name || "USR").replace(/\s+/g, "").toUpperCase().slice(0, 3);
       const uniqueNumber = Date.now().toString().slice(-5);
-      const customerId = `${cleanName}${day}${month}${year}${uniqueNumber}`;
+      const customerId   = `${cleanName}${day}${month}${year}${uniqueNumber}`;
 
       user = await User.create({
-        username:   given_name,
+        username:   given_name   || "User",
         email,
-        password:   await bcrypt.hash("google_login_user_" + email, 10),
+        password:   await bcrypt.hash("google_" + (sub || email), 10),
         customerId,
         isVarifyed: true,
-        profilePic: picture,
+        profilePic: picture      || "",
       });
 
       await UserAddress.create({
         userEmail: email,
         customerId,
-        username: given_name,
-        userId: user._id,
+        username:  given_name || "User",
+        userId:    user._id,
       });
     }
 
+    // ── Generate tokens ────────────────────────────────────────────
     const accessToken = jwt.sign(
       { id: user._id },
       process.env.USER_JWT_SECRET,
@@ -309,21 +310,23 @@ export const googleLogin = async (req, res) => {
     user.isLoged = true;
     await user.save();
 
+    // ── Set cookie — sameSite "none" required for cross-domain ─────
+    // Frontend: chomoktomok.com  ←→  Backend: onrender.com
     res.cookie("userToken", accessToken, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: false,
+      sameSite: "none",   // ← cross-domain requires none
+      secure:   true,     // ← required when sameSite is none
     });
 
     return res.status(200).json({
-      success: true,
-      message: "Google login successful",
-      accessToken,   // ← frontend needs this
+      success:      true,
+      message:      "Google login successful",
+      accessToken,
       refreshToken,
       user: {
-        _id:   user._id,
-        email: user.email,
-        firstName: user.username || given_name,
+        _id:      user._id,
+        email:    user.email,
+        username: user.username || given_name,
       },
     });
   } catch (error) {
@@ -331,7 +334,6 @@ export const googleLogin = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 
 
