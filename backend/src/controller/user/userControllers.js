@@ -493,7 +493,7 @@ export const submitFeedback = async (req, res) => {
 export const getFeedbackByProduct = async (req, res) => {
   try {
     const { productId } = req.params;
-    console.log("Product Id : ", productId);
+   
     if (!productId) {
       return res.status(400).json({ success: false, message: "productId is required" });
     }

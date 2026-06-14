@@ -4,21 +4,22 @@ import ProductDetails from "../../model/admin/productDetails.js";
 import Order          from "../../model/order/order.js";
 import DeliveryCode   from "../../model/order/deliveryCodeSchema.js";
 import Return         from "../../model/order/returnSchema.js";
-
+import Feedback from "../../model/user/userFeedback.js";
 // ─── Get Products By Category ─────────────────────────────────────────────────
 // GET /productBuy/getProductsByCategory?category=Men&page=1&limit=10
 export const getProductsByCategory = async (req, res) => {
   try {
-    const { page = 1, limit = 10, category, newArrivals } = req.query;
+    const { page = 1, limit = 10, category, newArrivals, trending } = req.query;
 
     const VALID_CATEGORIES = [
       "Men", "Women", "Kids", "Earrings", "Necklaces", "Oversized", "Hoodies",
     ];
 
     const isNewArrivals = newArrivals === "true";
+    const isTrending    = trending === "true";
 
     // Category is required only for normal category fetches
-    if (!isNewArrivals) {
+    if (!isNewArrivals && !isTrending) {
       if (!category) {
         return res.status(400).json({ success: false, message: "Category is required." });
       }
@@ -34,7 +35,114 @@ export const getProductsByCategory = async (req, res) => {
     const limitNum = Math.max(1, Math.min(50, parseInt(limit)));
     const skip     = (pageNum - 1) * limitNum;
 
-    // Build filter — no category constraint for New Arrivals
+    // ── Trending: computed from order count + average rating ─────────────────
+    if (isTrending) {
+      const NINETY_DAYS_AGO = new Date();
+      NINETY_DAYS_AGO.setDate(NINETY_DAYS_AGO.getDate() - 90);
+
+      // 1) Recent order counts per product (last 90 days, non-cancelled)
+      const orderAgg = await Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: NINETY_DAYS_AGO },
+            orderState: { $nin: ["CANCELLED"] },
+          },
+        },
+        {
+          $group: {
+            _id: "$productId",
+            orderCount: { $sum: "$quantity" },
+          },
+        },
+      ]);
+
+      // 2) Average rating + feedback count per product (visible feedback only)
+      const ratingAgg = await Feedback.aggregate([
+        { $match: { isVisible: true } },
+        {
+          $group: {
+            _id: "$productId",
+            avgRating:    { $avg: "$rating" },
+            ratingCount:  { $sum: 1 },
+          },
+        },
+      ]);
+
+      const orderMap  = {};
+      orderAgg.forEach((o)  => { orderMap[o._id]  = o.orderCount; });
+
+      const ratingMap = {};
+      ratingAgg.forEach((r) => {
+        ratingMap[r._id] = { avgRating: r.avgRating, ratingCount: r.ratingCount };
+      });
+
+      // 3) Fetch all active products in valid categories
+      const products = await Product.find(
+        {
+          status: { $in: ["Active", "Low"] },
+          category: { $in: VALID_CATEGORIES },
+        },
+        {
+          productId: 1, productName: 1, price: 1, discount: 1, finalPrice: 1,
+          stockBySize: 1, productColor: 1, productImages: { $slice: 1 }, _id: 0,
+        }
+      ).lean();
+
+      // 4) Compute a trending score per product
+      //    score = orderCount * 2  +  avgRating * log(ratingCount + 1) * 1.5
+      //    Products with zero orders AND zero ratings get score 0 and are excluded.
+      const scored = products
+        .map((p) => {
+          const orderCount = orderMap[p.productId] || 0;
+          const r           = ratingMap[p.productId] || { avgRating: 0, ratingCount: 0 };
+
+          const orderScore  = orderCount * 2;
+          const ratingScore = r.avgRating * Math.log(r.ratingCount + 1) * 1.5;
+          const score       = orderScore + ratingScore;
+
+          return { product: p, score, orderCount, avgRating: r.avgRating, ratingCount: r.ratingCount };
+        })
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      const total      = scored.length;
+      const pageSlice  = scored.slice(skip, skip + limitNum);
+
+      const shaped = pageSlice.map(({ product: p, avgRating, ratingCount, orderCount }) => ({
+        id:          p.productId,
+        name:        p.productName,
+        price:       p.price,
+        discount:    p.discount,
+        finalPrice:  p.finalPrice,
+        image:       p.productImages?.[0] ?? null,
+        color:       p.productColor || null,
+        avgRating:   Number(avgRating.toFixed(1)),
+        ratingCount,
+        orderCount,
+        sizeStock:  {
+          S:   p.stockBySize?.s   ?? 0,
+          M:   p.stockBySize?.m   ?? 0,
+          L:   p.stockBySize?.l   ?? 0,
+          XL:  p.stockBySize?.xl  ?? 0,
+          XXL: p.stockBySize?.xxl ?? 0,
+        },
+      }));
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          category:    "Trending",
+          products:    shaped,
+          total,
+          page:        pageNum,
+          totalPages:  Math.ceil(total / limitNum),
+          hasNextPage: pageNum < Math.ceil(total / limitNum),
+          hasPrevPage: pageNum > 1,
+        },
+      });
+    }
+
+    // ── Normal category / new arrivals path ────────────────────────────────────
     const filter = { status: { $in: ["Active", "Low"] } };
 
     if (!isNewArrivals) {
