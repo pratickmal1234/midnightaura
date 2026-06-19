@@ -9,6 +9,7 @@ import productRoute    from "./src/routes/productRoutes.js";
 import productBuyRoutes from "./src/routes/productBuyRoutes.js";
 import deliveryProductRoute from "./src/routes/deliveryProductRoute.js";
 import cartRouter      from "./src/routes/cartRoute.js";
+import discountRoute from "./src/routes/discountRoutes.js";
 
 const app = express();
 
@@ -50,6 +51,7 @@ app.use("/product",     productRoute);
 app.use("/productBuy",  productBuyRoutes);
 app.use("/delivery",    deliveryProductRoute);
 app.use("/cart",        cartRouter);
+app.use("/discount",discountRoute);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
