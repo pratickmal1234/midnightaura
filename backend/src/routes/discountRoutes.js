@@ -1,5 +1,5 @@
 import express from "express";
-import { applyDiscount, getUserDiscounts, saveDiscount } from "../controller/user/discountController.js";
+import {  consumeDiscount, getUserDiscounts, saveDiscount, validateDiscount } from "../controller/user/discountController.js";
 
 
 const discountRoute = express.Router()
@@ -7,7 +7,8 @@ const discountRoute = express.Router()
 
 discountRoute.post("/saveDiscount",saveDiscount);
 discountRoute.get("/discounts", getUserDiscounts);
-discountRoute.post("/applyDiscount", applyDiscount);
+discountRoute.post("/validateDiscount", validateDiscount);
+discountRoute.post("/consumeDiscount",  consumeDiscount); 
 
 
 

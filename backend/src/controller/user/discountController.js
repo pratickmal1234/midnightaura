@@ -33,6 +33,24 @@ function genDiscountId(label) {
   return `SAVE${tag}-${rand}`;
 }
 
+// ── Helper: run the shared validity checks against a voucher doc ───
+// Used by both validateDiscount (read-only, called at checkout) and
+// consumeDiscount (mutating, called after payment success) so the two
+// endpoints can never disagree about what counts as "valid."
+function checkVoucherValidity(voucher) {
+  if (!voucher) return { ok: false, status: 404, message: "Voucher not found." };
+  if (voucher.discountLabel === "NO DISCOUNT") {
+    return { ok: false, status: 400, message: "This voucher has no discount to apply." };
+  }
+  if (voucher.isUsed) {
+    return { ok: false, status: 400, message: "Voucher already used." };
+  }
+  if (new Date() > new Date(voucher.expiresAt)) {
+    return { ok: false, status: 400, message: "Voucher has expired." };
+  }
+  return { ok: true };
+}
+
 // ── Save Discount Voucher ──────────────────────────────────────────
 // POST /user/saveDiscount
 // Body: { userEmail, customerId, discountLabel }
@@ -136,10 +154,17 @@ export const getUserDiscounts = async (req, res) => {
   }
 };
 
-// ── Apply / Redeem Discount ────────────────────────────────────────
-// PATCH /user/applyDiscount
+// ── Validate Discount (READ-ONLY — does NOT mark the voucher used) ──
+// POST /discount/validateDiscount
 // Body: { discountId, userEmail }
-export const applyDiscount = async (req, res) => {
+//
+// Call this from the checkout page when the person types in a code and
+// hits "Apply." It tells them whether the code is good and what it's
+// worth, WITHOUT spending it — so if they abandon checkout, refresh the
+// page, or never reach payment, the voucher is untouched and still usable.
+// The actual "spend" happens in consumeDiscount, called only after a
+// successful payment.
+export const validateDiscount = async (req, res) => {
   try {
     const { discountId, userEmail } = req.body;
 
@@ -155,31 +180,71 @@ export const applyDiscount = async (req, res) => {
       userEmail: userEmail.toLowerCase(),
     });
 
-    if (!voucher) {
-      return res.status(404).json({ success: false, message: "Voucher not found." });
+    const check = checkVoucherValidity(voucher);
+    if (!check.ok) {
+      return res.status(check.status).json({ success: false, message: check.message });
     }
-    if (voucher.discountLabel === "NO DISCOUNT") {
-      return res.status(400).json({ success: false, message: "This voucher has no discount to apply." });
-    }
-    if (voucher.isUsed) {
-      return res.status(400).json({ success: false, message: "Voucher already used." });
-    }
-    if (new Date() > voucher.expiresAt) {
-      return res.status(400).json({ success: false, message: "Voucher has expired." });
-    }
-
-    voucher.isUsed = true;
-    voucher.usedAt = new Date();
-    await voucher.save();
 
     return res.status(200).json({
-      success:  true,
-      message:  "Voucher applied successfully.",
+      success: true,
+      message: "Voucher is valid.",
       voucher,
       discountValue: voucher.discountValue,
     });
   } catch (error) {
-    console.error("applyDiscount error:", error);
+    console.error("validateDiscount error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ── Consume Discount (MUTATES — sets isUsed: true) ───────────────────
+// POST /discount/consumeDiscount
+// Body: { discountId, userEmail, orderId? }
+//
+// Call this ONLY after payment has actually succeeded / the order has
+// actually been placed — e.g. from inside your payment-success handler
+// or webhook, right after you've confirmed the charge went through.
+// This is the one place that should ever set isUsed: true.
+//
+// Re-runs the same validity checks as validateDiscount as a safety net
+// (e.g. against the code expiring or being double-spent in the gap
+// between checkout and payment completing, or two tabs racing each
+// other) — so don't skip calling this just because validateDiscount
+// already passed earlier in the flow.
+export const consumeDiscount = async (req, res) => {
+  try {
+    const { discountId, userEmail, orderId } = req.body;
+
+    if (!discountId || !userEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "discountId and userEmail are required.",
+      });
+    }
+
+    const voucher = await UserDiscount.findOne({
+      discountId,
+      userEmail: userEmail.toLowerCase(),
+    });
+
+    const check = checkVoucherValidity(voucher);
+    if (!check.ok) {
+      return res.status(check.status).json({ success: false, message: check.message });
+    }
+
+    voucher.isUsed = true;
+    voucher.usedAt = new Date();
+    if (orderId) voucher.orderId = orderId; // only persists if your schema has this field
+    await voucher.save();
+
+    return res.status(200).json({
+      success:       true,
+      message:       "Voucher applied successfully.",
+      voucher,
+      discountValue: voucher.discountValue,
+    });
+  } catch (error) {
+    console.error("consumeDiscount error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
