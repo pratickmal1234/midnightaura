@@ -340,93 +340,122 @@ export const placeCartOrder = async (req, res) => {
     const {
       customerId,
       items,
-      voucherId     = null,
+
+      subtotal,
+      mrpTotal,
+      totalDiscount,
+
+      voucherId = null,
       voucherDiscount = 0,
+
+      deliveryCharge,
+      totalPrice,
+
       payMethod,
     } = req.body;
- 
-    if (!customerId || !Array.isArray(items) || items.length === 0 || !payMethod) {
-      return res.status(400).json({ success: false, message: "Missing required fields." });
+
+    if (
+      !customerId ||
+      !Array.isArray(items) ||
+      items.length === 0 ||
+      !payMethod
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields.",
+      });
     }
- 
-    // ── Fetch all products in one query ───────────────────────────────────────
+
+    // ── Fetch all products ─────────────────────────────────────────────
     const productIds = [...new Set(items.map((i) => i.productId))];
-    const products   = await Product.find({ productId: { $in: productIds } }).lean();
+
+    const products = await Product.find({
+      productId: { $in: productIds },
+    }).lean();
+
     const productMap = {};
-    products.forEach((p) => { productMap[p.productId] = p; });
- 
-    // ── Build line-items with DB prices ──────────────────────────────────────
-    let subtotal  = 0;
-    let mrpTotal  = 0;
+    products.forEach((p) => {
+      productMap[p.productId] = p;
+    });
+
+    // ── Build line items ───────────────────────────────────────────────
     const shapedItems = [];
- 
+
     for (const item of items) {
       const p = productMap[item.productId];
+
       if (!p) {
-        return res.status(400).json({ success: false, message: `Product ${item.productId} not found.` });
+        return res.status(400).json({
+          success: false,
+          message: `Product ${item.productId} not found.`,
+        });
       }
+
       const unitPrice = p.finalPrice || p.price;
-      const mrp       = p.price;
-      const qty       = Math.max(1, Math.min(10, Number(item.quantity)));
+      const mrp = p.price;
+      const qty = Math.max(1, Math.min(10, Number(item.quantity)));
       const lineTotal = unitPrice * qty;
- 
-      subtotal += lineTotal;
-      mrpTotal += mrp * qty;
- 
+
       shapedItems.push({
-        productId:    p.productId,
-        productName:  p.productName,
+        productId: p.productId,
+        productName: p.productName,
         productImage: p.productImages?.[0] ?? null,
-        size:         item.size || null,
-        quantity:     qty,
+        size: item.size || null,
+        quantity: qty,
         unitPrice,
         mrp,
-        discount:     p.discount || 0,
+        discount: p.discount || 0,
         lineTotal,
       });
     }
- 
-    const totalDiscount    = mrpTotal - subtotal;
-    const afterVoucher     = subtotal - Number(voucherDiscount);
-    const deliveryCharge   = afterVoucher >= 699
-      ? 0
-      : Math.round(afterVoucher * 0.08);    // 8 % — matches cart page
- 
-    const totalPrice = afterVoucher + deliveryCharge;
- 
-    // ── Persist order ─────────────────────────────────────────────────────────
+
+    // ── Save order ─────────────────────────────────────────────────────
     const order = await CartOrder.create({
       customerId,
+
       items: shapedItems,
-      subtotal:       Math.round(subtotal),
-      mrpTotal:       Math.round(mrpTotal),
-      totalDiscount:  Math.round(totalDiscount),
-      voucherId:      voucherId || null,
+
+      subtotal: Math.round(Number(subtotal)),
+      mrpTotal: Math.round(Number(mrpTotal)),
+      totalDiscount: Math.round(Number(totalDiscount)),
+
+      voucherId: voucherId || null,
       voucherDiscount: Math.round(Number(voucherDiscount)),
-      deliveryCharge,
-      totalPrice:     Math.round(totalPrice),
+
+      deliveryCharge: Number(deliveryCharge),
+      totalPrice: Number(totalPrice),
+
       payMethod,
-      paymentStatus:  payMethod === "COD" ? "PENDING" : "PAID",
-      orderState:     "PLACED",
+      paymentStatus: payMethod === "COD" ? "PENDING" : "PAID",
+      orderState: "PLACED",
     });
- 
-    // ── Clear the customer's cart after successful order ──────────────────────
+
+    // ── Clear cart ─────────────────────────────────────────────────────
     try {
       await CartItem.deleteMany({ customerId });
     } catch (cartErr) {
-      console.warn("Could not clear cart after order:", cartErr.message);
+      console.warn(
+        "Could not clear cart after order:",
+        cartErr.message
+      );
     }
- 
+
     return res.status(201).json({
       success: true,
       message: "Cart order placed successfully.",
-      data:    order,
+      data: order,
     });
   } catch (err) {
     console.error("placeCartOrder error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
+
+
  
 // ─── GET /cartOrder/getCartOrders/:customerId ─────────────────────────────────
 export const getCartOrdersByCustomer = async (req, res) => {
