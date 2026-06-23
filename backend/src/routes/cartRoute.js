@@ -6,6 +6,11 @@ import {
   removeFromCart,
   updateQuantity,
   clearCart,
+  placeCartOrder,
+  fetchAllCartOrders,
+  getCartOrdersByCustomer,
+  getCartOrderById,
+  updateCartOrderStatus,
 } from "../controller/addToCart/addToCartController.js";
 
 const cartRouter = express.Router();
@@ -15,5 +20,9 @@ cartRouter.get   ("/getCart/:customerId",      getCart);         // GET    /cart
 cartRouter.delete("/remove/:cartId",           removeFromCart);  // DELETE /cart/remove/:cartId
 cartRouter.patch ("/updateQuantity/:cartId",   updateQuantity);  // PATCH  /cart/updateQuantity/:cartId
 cartRouter.delete("/clearCart",                    clearCart);       // DELETE /cart/clear
-
+cartRouter.post("/placeCartOrder", placeCartOrder); 
+cartRouter.get("/fetchAllCartOrders", fetchAllCartOrders); 
+cartRouter.get("/getCartOrders/:customerId",getCartOrdersByCustomer);
+cartRouter.get("/getCartOrderById/:cartOrderId",getCartOrderById);  
+cartRouter.put("/updateCartOrderStatus/:cartOrderId", updateCartOrderStatus);
 export default cartRouter;

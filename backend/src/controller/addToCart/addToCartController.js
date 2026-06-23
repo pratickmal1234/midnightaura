@@ -3,6 +3,12 @@ import CartItem from "../../model/cart/cartSchema.js";
 import Product  from "../../model/admin/productSchema.js";
 import ProductDetails from "../../model/admin/productDetails.js";
 import Address from "../../model/user/userAddress.js";
+import CartOrder from "../../model/order/cartOrder.js";
+import User        from "../../model/user/userSchema.js";
+import UserAddress  from "../../model/user/userAddress.js";
+import DeliveryCode   from "../../model/order/deliveryCodeSchema.js";
+import Return         from "../../model/order/returnSchema.js";
+import Feedback from "../../model/user/userFeedback.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /cart/addToCart
 // Body: { customerId, productId, size? }
@@ -310,5 +316,351 @@ export const clearCart = async (req, res) => {
   } catch (error) {
     console.error("[clearCart]", error);
     return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const placeCartOrder = async (req, res) => {
+  try {
+    const {
+      customerId,
+      items,
+      voucherId     = null,
+      voucherDiscount = 0,
+      payMethod,
+    } = req.body;
+ 
+    if (!customerId || !Array.isArray(items) || items.length === 0 || !payMethod) {
+      return res.status(400).json({ success: false, message: "Missing required fields." });
+    }
+ 
+    // ── Fetch all products in one query ───────────────────────────────────────
+    const productIds = [...new Set(items.map((i) => i.productId))];
+    const products   = await Product.find({ productId: { $in: productIds } }).lean();
+    const productMap = {};
+    products.forEach((p) => { productMap[p.productId] = p; });
+ 
+    // ── Build line-items with DB prices ──────────────────────────────────────
+    let subtotal  = 0;
+    let mrpTotal  = 0;
+    const shapedItems = [];
+ 
+    for (const item of items) {
+      const p = productMap[item.productId];
+      if (!p) {
+        return res.status(400).json({ success: false, message: `Product ${item.productId} not found.` });
+      }
+      const unitPrice = p.finalPrice || p.price;
+      const mrp       = p.price;
+      const qty       = Math.max(1, Math.min(10, Number(item.quantity)));
+      const lineTotal = unitPrice * qty;
+ 
+      subtotal += lineTotal;
+      mrpTotal += mrp * qty;
+ 
+      shapedItems.push({
+        productId:    p.productId,
+        productName:  p.productName,
+        productImage: p.productImages?.[0] ?? null,
+        size:         item.size || null,
+        quantity:     qty,
+        unitPrice,
+        mrp,
+        discount:     p.discount || 0,
+        lineTotal,
+      });
+    }
+ 
+    const totalDiscount    = mrpTotal - subtotal;
+    const afterVoucher     = subtotal - Number(voucherDiscount);
+    const deliveryCharge   = afterVoucher >= 699
+      ? 0
+      : Math.round(afterVoucher * 0.08);    // 8 % — matches cart page
+ 
+    const totalPrice = afterVoucher + deliveryCharge;
+ 
+    // ── Persist order ─────────────────────────────────────────────────────────
+    const order = await CartOrder.create({
+      customerId,
+      items: shapedItems,
+      subtotal:       Math.round(subtotal),
+      mrpTotal:       Math.round(mrpTotal),
+      totalDiscount:  Math.round(totalDiscount),
+      voucherId:      voucherId || null,
+      voucherDiscount: Math.round(Number(voucherDiscount)),
+      deliveryCharge,
+      totalPrice:     Math.round(totalPrice),
+      payMethod,
+      paymentStatus:  payMethod === "COD" ? "PENDING" : "PAID",
+      orderState:     "PLACED",
+    });
+ 
+    // ── Clear the customer's cart after successful order ──────────────────────
+    try {
+      await CartItem.deleteMany({ customerId });
+    } catch (cartErr) {
+      console.warn("Could not clear cart after order:", cartErr.message);
+    }
+ 
+    return res.status(201).json({
+      success: true,
+      message: "Cart order placed successfully.",
+      data:    order,
+    });
+  } catch (err) {
+    console.error("placeCartOrder error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+ 
+// ─── GET /cartOrder/getCartOrders/:customerId ─────────────────────────────────
+export const getCartOrdersByCustomer = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: "customerId is required.",
+      });
+    }
+
+    const orders = await CartOrder.find({ customerId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!orders || orders.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No cart orders found.",
+        data: [],
+      });
+    }
+
+    const cartOrderIds = orders.map((o) => o.cartOrderId);
+
+    const [deliveryCodes, returns] = await Promise.all([
+      DeliveryCode.find({
+        orderId: { $in: cartOrderIds },
+      }).lean(),
+
+      Return.find({
+        orderId: { $in: cartOrderIds },
+      }).lean(),
+    ]);
+
+    const deliveryCodeMap = {};
+    const returnMap = {};
+
+    deliveryCodes.forEach((dc) => {
+      deliveryCodeMap[dc.orderId] = dc;
+    });
+
+    returns.forEach((r) => {
+      returnMap[r.orderId] = r;
+    });
+
+    const shaped = orders.map((order) => {
+      const dcEntry = deliveryCodeMap[order.cartOrderId] || null;
+      const retEntry = returnMap[order.cartOrderId] || null;
+
+      return {
+        cartOrderId: order.cartOrderId,
+        createdAt: order.createdAt,
+
+        customerId: order.customerId,
+        orderState: order.orderState,
+
+        totalItems: order.totalItems,
+        totalPrice: order.totalPrice,
+        deliveryCharge: order.deliveryCharge,
+
+        payMethod: order.payMethod,
+        paymentStatus: order.paymentStatus,
+
+        deliveryAddress: order.deliveryAddress,
+
+        deliveryCode: dcEntry
+          ? {
+              code: dcEntry.code,
+              verified: dcEntry.verified,
+            }
+          : null,
+
+        returnInfo: retEntry
+          ? {
+              returnId: retEntry.returnId,
+              returnCause: retEntry.returnCause,
+              returnStatus: retEntry.returnStatus,
+              returnedAt: order.returnedAt,
+            }
+          : null,
+
+        items: (order.items || []).map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          productImage: item.productImage,
+          size: item.size,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          mrp: item.mrp,
+          discount: item.discount,
+          lineTotal: item.lineTotal,
+        })),
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Cart orders fetched successfully.",
+      total: shaped.length,
+      data: shaped,
+    });
+  } catch (err) {
+    console.error("getCartOrdersByCustomer error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: err.message,
+    });
+  }
+};
+ 
+// ─── GET /cartOrder/getCartOrderById/:cartOrderId ────────────────────────────
+// ─── GET /cartOrder/getCartOrderById/:cartOrderId ────────────────────────────
+export const getCartOrderById = async (req, res) => {
+  try {
+    const { cartOrderId } = req.params;
+    if (!cartOrderId) {
+      return res.status(400).json({ success: false, message: "cartOrderId is required." });
+    }
+
+    const order = await CartOrder.findOne({ cartOrderId }).lean();
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Cart order not found." });
+    }
+
+    const [customer, address] = await Promise.all([
+      User.findOne({ customerId: order.customerId })
+        .select("-password -token")
+        .lean(),
+      UserAddress.findOne({ customerId: order.customerId }).lean(),
+    ]);
+
+    const enrichedOrder = {
+      ...order,
+      customer:        customer || null,
+      deliveryAddress: address || null,
+    };
+
+    return res.status(200).json({ success: true, data: enrichedOrder });
+  } catch (err) {
+    console.error("getCartOrderById error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+ 
+// ─── PUT /cartOrder/updateCartOrderStatus/:cartOrderId ───────────────────────
+export const updateCartOrderStatus = async (req, res) => {
+  try {
+    const { cartOrderId } = req.params;
+    const { orderState, reason } = req.body;
+ 
+    if (!cartOrderId || !orderState) {
+      return res.status(400).json({ success: false, message: "cartOrderId and orderState are required." });
+    }
+ 
+    const ALLOWED = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"];
+    if (!ALLOWED.includes(orderState)) {
+      return res.status(400).json({ success: false, message: "Invalid orderState." });
+    }
+ 
+    const order = await CartOrder.findOne({ cartOrderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Cart order not found." });
+    }
+    if (order.orderState === orderState) {
+      return res.status(400).json({ success: false, message: `Order is already ${orderState}.` });
+    }
+    if (["CANCELLED"].includes(order.orderState) || order.orderState === "RETURNED") {
+      return res.status(400).json({ success: false, message: `Cannot update a ${order.orderState} order.` });
+    }
+    if (orderState === "RETURNED" && order.orderState !== "DELIVERED") {
+      return res.status(400).json({ success: false, message: "Only delivered orders can be returned." });
+    }
+ 
+    const update = { orderState };
+    if (orderState === "CONFIRMED") update.confirmedAt = new Date();
+    if (orderState === "SHIPPED")   update.shippedAt   = new Date();
+    if (orderState === "DELIVERED") update.deliveredAt = new Date();
+    if (orderState === "RETURNED")  update.returnedAt  = new Date();
+    if (orderState === "CANCELLED") {
+      update.cancelledAt        = new Date();
+      update.cancellationReason = reason || "No reason provided";
+    }
+ 
+    const updated = await CartOrder.findOneAndUpdate({ cartOrderId }, { $set: update }, { new: true });
+    return res.status(200).json({ success: true, message: `Order ${orderState.toLowerCase()} successfully.`, data: updated });
+  } catch (err) {
+    console.error("updateCartOrderStatus error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+ 
+// ─── GET /cartOrder/fetchAllCartOrders  (admin) ───────────────────────────────
+/**
+ * Returns all cart orders enriched with customer info.
+ * Adjust the User model import path to match your project.
+ */
+// ─── GET /cartOrder/fetchAllCartOrders  (admin) ───────────────────────────────
+export const fetchAllCartOrders = async (req, res) => {
+  try {
+    const orders = await CartOrder.find().sort({ createdAt: -1 }).lean();
+
+    if (!orders || orders.length === 0) {
+      return res.status(404).json({ message: "No cart orders found" });
+    }
+
+    const enrichedOrders = await Promise.all(
+      orders.map(async (order) => {
+        const [customer, address] = await Promise.all([
+          User.findOne({ customerId: order.customerId })
+            .select("-password -token")
+            .lean(),
+          UserAddress.findOne({ customerId: order.customerId }).lean(),
+        ]);
+
+        return {
+          ...order,
+          customer:        customer || null,
+          deliveryAddress: address || null,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      count:   enrichedOrders.length,
+      orders:  enrichedOrders,
+    });
+  } catch (err) {
+    console.error("fetchAllCartOrders error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
