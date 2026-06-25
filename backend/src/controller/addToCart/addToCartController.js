@@ -540,6 +540,19 @@ export const getCartOrdersByCustomer = async (req, res) => {
             }
           : null,
 
+        // ── NEW: per-stage timestamps, mirrors the single-order shape so the
+        // frontend's progress bar can show a date under each completed stage
+        // (Placed / Confirmed / Shipped / Delivered / Cancelled / Returned).
+        // A stage's date stays null until that stage has actually happened.
+        stageDates: {
+          PLACED:    order.createdAt    || null,
+          CONFIRMED: order.confirmedAt  || null,
+          SHIPPED:   order.shippedAt    || null,
+          DELIVERED: order.deliveredAt  || null,
+          CANCELLED: order.cancelledAt  || null,
+          RETURNED:  order.returnedAt   || null,
+        },
+
         items: (order.items || []).map((item) => ({
           productId: item.productId,
           productName: item.productName,

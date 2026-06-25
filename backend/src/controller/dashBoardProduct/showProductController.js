@@ -301,18 +301,18 @@ export const getCustomerOrders = async (req, res) => {
       Product.find({ productId: { $in: productIds } }).lean(),
       ProductDetails.find({ productId: { $in: productIds } }).lean(),
       DeliveryCode.find({ orderId: { $in: orderIds } }).lean(),
-      Return.find({ orderId: { $in: orderIds } }).lean(),       // ← NEW
+      Return.find({ orderId: { $in: orderIds } }).lean(),
     ]);
 
     const productMap        = {};
     const productDetailsMap = {};
     const deliveryCodeMap   = {};
-    const returnMap         = {};                               // ← NEW
+    const returnMap         = {};
 
     products.forEach((p)        => { productMap[p.productId]          = p;  });
     allProductDetails.forEach((d) => { productDetailsMap[d.productId] = d;  });
     deliveryCodes.forEach((dc)  => { deliveryCodeMap[dc.orderId]       = dc; });
-    returns.forEach((r)         => { returnMap[r.orderId]              = r;  }); // ← NEW
+    returns.forEach((r)         => { returnMap[r.orderId]              = r;  });
 
     const COLOR_CATEGORIES = ["Men","Women","Kids","Hoodies","Oversized"];
 
@@ -320,7 +320,7 @@ export const getCustomerOrders = async (req, res) => {
       const product = productMap[order.productId]        || null;
       const details = productDetailsMap[order.productId] || null;
       const dcEntry = deliveryCodeMap[order.orderId]     || null;
-      const retEntry = returnMap[order.orderId]          || null; // ← NEW
+      const retEntry = returnMap[order.orderId]          || null;
 
       let productBlock = null;
       if (product) {
@@ -363,7 +363,7 @@ export const getCustomerOrders = async (req, res) => {
         deliveryCode: dcEntry
           ? { code: dcEntry.code, verified: dcEntry.verified }
           : null,
-        returnInfo: retEntry                                     // ← NEW
+        returnInfo: retEntry
           ? {
               returnId:     retEntry.returnId,
               returnCause:  retEntry.returnCause,
@@ -371,6 +371,17 @@ export const getCustomerOrders = async (req, res) => {
               returnedAt:   order.returnedAt,
             }
           : null,
+        // ── NEW: per-stage timestamps, so the frontend can show a date under
+        // each step of the progress bar (Placed / Confirmed / Shipped / Delivered / Returned).
+        // A stage's date is null until that stage has actually happened.
+        stageDates: {
+          PLACED:    order.createdAt    || null,
+          CONFIRMED: order.confirmedAt  || null,
+          SHIPPED:   order.shippedAt    || null,
+          DELIVERED: order.deliveredAt  || null,
+          CANCELLED: order.cancelledAt  || null,
+          RETURNED:  order.returnedAt   || null,
+        },
         product: productBlock,
       };
     });
@@ -445,7 +456,7 @@ export const updateOrderStatus = async (req, res) => {
     if (orderState === "DELIVERED") updateData.deliveredAt  = new Date();
     if (orderState === "CONFIRMED") updateData.confirmedAt  = new Date();
     if (orderState === "SHIPPED")   updateData.shippedAt    = new Date();
-    if (orderState === "RETURNED")  updateData.returnedAt   = new Date();  // ← NEW
+    if (orderState === "RETURNED")  updateData.returnedAt   = new Date();
 
     const updated = await Order.findOneAndUpdate({ orderId }, { $set: updateData }, { new: true });
 
