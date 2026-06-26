@@ -1,5 +1,5 @@
 // controllers/dashBoardProduct/searchController.js
-// GET /productBuy/search?q=earring&maxPrice=500&minPrice=0
+// GET /productBuy/search?q=earring&minPrice=0&maxPrice=500
 import Product from "../../model/admin/productSchema.js";
 
 const VALID_CATEGORIES = [
@@ -8,33 +8,33 @@ const VALID_CATEGORIES = [
 
 // Category keyword map — if query matches these keywords, map to category
 const CATEGORY_KEYWORDS = {
-  men:       "Men",
-  man:       "Men",
-  gents:     "Men",
-  male:      "Men",
-  women:     "Women",
-  woman:     "Women",
-  ladies:    "Women",
-  female:    "Women",
-  girl:      "Women",
-  girls:     "Women",
-  kids:      "Kids",
-  kid:       "Kids",
-  children:  "Kids",
-  child:     "Kids",
-  boys:      "Kids",
-  boy:       "Kids",
-  earring:   "Earrings",
-  earrings:  "Earrings",
-  necklace:  "Necklaces",
-  necklaces: "Necklaces",
-  chain:     "Necklaces",
-  pendant:   "Necklaces",
-  oversized: "Oversized",
-  hoodie:    "Hoodies",
-  hoodies:   "Hoodies",
-  hood:      "Hoodies",
-  sweatshirt:"Hoodies",
+  men:        "Men",
+  man:        "Men",
+  gents:      "Men",
+  male:       "Men",
+  women:      "Women",
+  woman:      "Women",
+  ladies:     "Women",
+  female:     "Women",
+  girl:       "Women",
+  girls:      "Women",
+  kids:       "Kids",
+  kid:        "Kids",
+  children:   "Kids",
+  child:      "Kids",
+  boys:       "Kids",
+  boy:        "Kids",
+  earring:    "Earrings",
+  earrings:   "Earrings",
+  necklace:   "Necklaces",
+  necklaces:  "Necklaces",
+  chain:      "Necklaces",
+  pendant:    "Necklaces",
+  oversized:  "Oversized",
+  hoodie:     "Hoodies",
+  hoodies:    "Hoodies",
+  hood:       "Hoodies",
+  sweatshirt: "Hoodies",
 };
 
 const ROUTE_MAP = {
@@ -47,6 +47,9 @@ const ROUTE_MAP = {
   Hoodies:   "/user/dashboard/categories/hoodies",
 };
 
+// Escape regex-special characters in a single search word
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
  * GET /productBuy/search
  * Query params:
@@ -54,6 +57,14 @@ const ROUTE_MAP = {
  *   minPrice  — number (optional)
  *   maxPrice  — number (optional)
  *   limit     — default 8
+ *
+ * Matching rule (word-level, not whole-phrase):
+ *   The query is split into words. A product matches if its name contains
+ *   ANY of those words (case-insensitive). This means "red jjj" still
+ *   matches products containing "red" even though "jjj" matches nothing —
+ *   we no longer require the entire phrase "red jjj" to appear verbatim.
+ *   Category keywords are checked the same way: any single word in the
+ *   query that maps to / matches a category counts as a category hit.
  *
  * Returns:
  *   {
@@ -64,13 +75,13 @@ const ROUTE_MAP = {
  *   }
  *
  * categorySuggestionsType tells the frontend WHY categories were suggested:
- *   - "keyword": the query text itself matched a category name/keyword
- *                (e.g. "earring", "hoodie") — this is a deliberate category-style
- *                search, so categories should be shown ABOVE products.
- *   - "derived": the query didn't match any category keyword at all — categories
- *                were only inferred from the categories of matching products
- *                (e.g. "animated"). This is a NAME search, so products should be
- *                shown ABOVE categories on the frontend.
+ *   - "keyword": at least one word in the query matched a category name/keyword
+ *                directly (e.g. "earring", "hoodie") — this is a deliberate
+ *                category-style search, so categories should be shown ABOVE products.
+ *   - "derived": no word in the query matched a category keyword directly —
+ *                categories were only inferred from the categories of matching
+ *                products (e.g. "animated"). This is a NAME search, so products
+ *                should be shown ABOVE categories on the frontend.
  *   - "none":    no category suggestions at all.
  */
 export const searchProducts = async (req, res) => {
@@ -79,6 +90,9 @@ export const searchProducts = async (req, res) => {
     const query = q.trim().toLowerCase();
 
     const limitNum = Math.min(20, Math.max(1, parseInt(limit) || 8));
+
+    // Split into individual non-empty words
+    const words = query.length > 0 ? query.split(/\s+/).filter(Boolean) : [];
 
     // ── Build MongoDB filter ──────────────────────────────────────────────────
     const filter = { status: { $in: ["Active", "Low"] } };
@@ -90,32 +104,32 @@ export const searchProducts = async (req, res) => {
       if (maxPrice !== undefined) filter.finalPrice.$lte = parseFloat(maxPrice);
     }
 
-    // Name filter (partial match, case-insensitive)
-    if (query) {
-      filter.productName = { $regex: query, $options: "i" };
+    // Name filter — match if ANY word in the query appears in the product name.
+    // This is what lets "red jjj" still find products containing "red".
+    if (words.length > 0) {
+      const alternation = words.map(escapeRegex).join("|");
+      filter.productName = { $regex: alternation, $options: "i" };
     }
 
-    // ── Detect category suggestions from query keywords ────────────────────
+    // ── Detect category suggestions from query keywords (word-level) ───────
     const categorySuggestions = [];
-    if (query) {
-      const words = query.split(/\s+/);
-      const seenCategories = new Set();
+    const seenCategories = new Set();
 
-      for (const word of words) {
-        const mappedCat = CATEGORY_KEYWORDS[word];
-        if (mappedCat && !seenCategories.has(mappedCat)) {
-          seenCategories.add(mappedCat);
-          categorySuggestions.push({
-            category:    mappedCat,
-            route:       ROUTE_MAP[mappedCat],
-            matchReason: `in ${mappedCat}`,
-          });
-        }
+    for (const word of words) {
+      // Direct keyword map hit
+      const mappedCat = CATEGORY_KEYWORDS[word];
+      if (mappedCat && !seenCategories.has(mappedCat)) {
+        seenCategories.add(mappedCat);
+        categorySuggestions.push({
+          category:    mappedCat,
+          route:       ROUTE_MAP[mappedCat],
+          matchReason: `in ${mappedCat}`,
+        });
       }
 
-      // Also check if any valid category name is a substring of the query
+      // Category name itself appears as / within this word (e.g. "hoodies", "earring")
       for (const cat of VALID_CATEGORIES) {
-        if (!seenCategories.has(cat) && query.includes(cat.toLowerCase())) {
+        if (!seenCategories.has(cat) && word.includes(cat.toLowerCase())) {
           seenCategories.add(cat);
           categorySuggestions.push({
             category:    cat,
@@ -159,10 +173,9 @@ export const searchProducts = async (req, res) => {
     // If no category suggestions from keyword but products found,
     // derive categories from found products (this is a NAME-based match).
     if (categorySuggestions.length === 0 && productSuggestions.length > 0) {
-      const seenCats = new Set();
       for (const p of productSuggestions) {
-        if (!seenCats.has(p.category) && ROUTE_MAP[p.category]) {
-          seenCats.add(p.category);
+        if (!seenCategories.has(p.category) && ROUTE_MAP[p.category]) {
+          seenCategories.add(p.category);
           categorySuggestions.push({
             category:    p.category,
             route:       ROUTE_MAP[p.category],
