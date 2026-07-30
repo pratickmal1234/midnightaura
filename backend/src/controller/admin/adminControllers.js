@@ -40,9 +40,8 @@ export const loginAdmin = async (req, res) => {
       return res.status(401).json({ error: "Invalid Credentials" });
     }
 
-    // Compare passwords
-    const isAllowed = await bcrypt.compare(password, people.password);
-    if (!isAllowed) {
+    // Direct plain-text comparison
+    if (password !== people.password) {
       return res.status(401).json({ error: "Invalid Credentials" });
     }
 
