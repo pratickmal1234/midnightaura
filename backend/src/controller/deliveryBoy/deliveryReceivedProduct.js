@@ -6,6 +6,54 @@ import Order from "../../model/order/order.js";
 import User from "../../model/user/userSchema.js";
 import UserAddress from "../../model/user/userAddress.js";
 import DeliveryCode from "../../model/order/deliveryCodeSchema.js";
+import deliveryBoySchema from "../../model/delivery/deliveryBoySchema.js";
+import jwt from "jsonwebtoken"
+
+
+
+
+export const loginDeliveryBoy = async (req, res) => {
+  try {
+    const { emailId, password } = req.body;
+
+    if (!emailId || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    // Find delivery boy by email
+    const people = await deliveryBoySchema.findOne({ emailId });
+    if (!people) {
+      return res.status(401).json({ error: "Invalid Credentials" });
+    }
+
+    // Direct plain-text comparison
+    if (password !== people.password) {
+      return res.status(401).json({ error: "Invalid Credentials" });
+    }
+
+    // Generate JWT
+    const token = jwt.sign(
+      { id: people.id, emailId: people.emailId },
+      process.env.DELIVERY_JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    res.cookie("deliveryToken", token, { httpOnly: true, sameSite: "strict" });
+
+    return res.status(200).json({ message: "Login Successfully", success: true });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ error: err.message || "Server Error" });
+  }
+};
+
+
+
+
+
+
+
+
 
 export const fetchDeliveryOrders = async (req, res) => {
   try {
